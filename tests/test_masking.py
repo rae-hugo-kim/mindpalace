@@ -11,9 +11,19 @@ def test_mask_sk_pattern():
 
 
 def test_mask_jwt_pattern():
-    """T2 (RED): JWT three-segment token must be masked."""
+    """T2: JWT three-segment token must be masked."""
     jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
     text = f"Authorization: Bearer {jwt} for the request"
     result = mask_secrets(text)
     assert jwt not in result
     assert "[MASKED]" in result
+
+
+def test_mask_password_keyword():
+    """T3 (RED): value after a password/passwd/pwd keyword must be masked, keyword preserved."""
+    text = "Connect with password: SuperSecret123! to login"
+    result = mask_secrets(text)
+    assert "SuperSecret123!" not in result
+    assert "[MASKED]" in result
+    # keyword preserved for context
+    assert "password" in result.lower()
