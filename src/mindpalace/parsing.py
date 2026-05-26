@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Any
 
 _TURN_TYPES = ("user", "assistant")
+_SENDER_ROLE_MAP = {"human": "user", "user": "user", "assistant": "assistant"}
+_SUPPORTED_CHAT_SCHEMA_VERSIONS = {1}
 
 
 def _extract_text(content: Any) -> str:
@@ -75,3 +77,54 @@ def parse_claude_code_jsonl(path: str) -> dict:
         "turns": turns,
         "extra": extra,
     }
+
+
+def parse_chat_json(path: str) -> list[dict]:
+    """Parse a user-curated Claude chat export JSON.
+
+    Input contract: docs/architecture/chat-import-schema.md (schema_version 1).
+
+    Returns a list of session dicts (one per conversation). Each session:
+      session_id: str  (conversation.uuid)
+      title: str | None  (conversation.name)
+      turns: list[dict]  (one per chat_messages entry)
+        each turn: {turn_id, role, text, timestamp, parent_id}
+      extra: dict  (summary, created_at, updated_at from conversation)
+    """
+    with Path(path).open() as f:
+        data = json.load(f)
+
+    sv = data.get("schema_version")
+    if sv not in _SUPPORTED_CHAT_SCHEMA_VERSIONS:
+        raise ValueError(
+            f"unsupported chat schema_version: {sv!r} "
+            f"(expected one of {sorted(_SUPPORTED_CHAT_SCHEMA_VERSIONS)})"
+        )
+
+    sessions: list[dict] = []
+    for conv in data.get("conversations", []):
+        turns: list[dict] = []
+        for msg in conv.get("chat_messages", []):
+            sender = msg.get("sender", "")
+            turns.append(
+                {
+                    "turn_id": msg.get("uuid", ""),
+                    "role": _SENDER_ROLE_MAP.get(sender, sender),
+                    "text": msg.get("text", ""),
+                    "timestamp": msg.get("created_at", ""),
+                    "parent_id": msg.get("parent_message_uuid"),
+                }
+            )
+        sessions.append(
+            {
+                "session_id": conv.get("uuid", ""),
+                "title": conv.get("name"),
+                "turns": turns,
+                "extra": {
+                    "summary": conv.get("summary", ""),
+                    "created_at": conv.get("created_at", ""),
+                    "updated_at": conv.get("updated_at", ""),
+                },
+            }
+        )
+    return sessions
