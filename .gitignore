@@ -27,3 +27,29 @@ artifacts/**
 !artifacts/**/
 !artifacts/README.md
 !artifacts/**/README.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# venv
+.venv/
+venv/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# uv
+uv.lock
+
+# DB (local data)
+*.db
+*.sqlite
+*.sqlite3
+data/
