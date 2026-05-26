@@ -7,12 +7,16 @@ requires-python = ">=3.12"
 dependencies = [
     "sentence-transformers>=5.5.1",
     "sqlite-vec>=0.1.9",
+    "typer>=0.25.1",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
 ]
+
+[project.scripts]
+mindpalace = "mindpalace.cli:main"
 
 [build-system]
 requires = ["hatchling"]
