@@ -21,7 +21,7 @@ import typer
 
 from mindpalace.embedding import embed_chunk
 from mindpalace.parsing import parse_chat_json, parse_claude_code_jsonl
-from mindpalace.search import search as search_chunks
+from mindpalace.search import DEFAULT_CONFIDENCE_THRESHOLD, search as search_chunks
 from mindpalace.storage import init_db, store_session
 
 app = typer.Typer(add_completion=False, help="Mindpalace personal knowledge vault.")
@@ -69,23 +69,38 @@ def search_cmd(
     query: str = typer.Argument(..., help="Natural-language query."),
     db: Path = typer.Option(..., "--db", help="SQLite DB path."),
     top_k: int = typer.Option(5, "--top-k", "-k", help="Number of results."),
+    min_confidence: float = typer.Option(
+        DEFAULT_CONFIDENCE_THRESHOLD,
+        "--min-confidence",
+        help="L2 distance cut-off; hits above this are marked low-confidence.",
+    ),
 ) -> None:
     """Run a semantic search over stored chunks."""
-    results = search_chunks(str(db), query, embed_chunk, top_k=top_k)
+    results = search_chunks(
+        str(db), query, embed_chunk, top_k=top_k, confidence_threshold=min_confidence
+    )
 
     if not results:
         typer.echo("no results (0 hits) — try removing filters or broadening the query.")
         return
 
-    typer.echo(f"{len(results)} hits for: {query}")
+    if all(r["low_confidence"] for r in results):
+        typer.echo(
+            f"no high-confidence matches for: {query}\n"
+            f"  showing top {len(results)} best-effort results below (all low-confidence)."
+        )
+    else:
+        typer.echo(f"{len(results)} hits for: {query}")
+
     for i, hit in enumerate(results, start=1):
         text = (hit["text"] or "").replace("\n", " ")
         if len(text) > _TEXT_PREVIEW_CHARS:
             text = text[:_TEXT_PREVIEW_CHARS] + "…"
+        marker = "⚠ " if hit["low_confidence"] else "  "
         typer.echo(
-            f"[{i}] distance={hit['distance']:.4f} "
+            f"{marker}[{i}] distance={hit['distance']:.4f} "
             f"source={hit['source']} role={hit['role']} "
-            f"title={hit['title']!r}\n    {text}"
+            f"title={hit['title']!r}\n      {text}"
         )
 
 

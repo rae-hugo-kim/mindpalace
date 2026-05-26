@@ -71,6 +71,45 @@ def test_search_includes_chunk_metadata(tmp_path):
     assert isinstance(r["distance"], float)
 
 
+def test_search_marks_low_confidence_when_distance_above_threshold(tmp_path):
+    """T13 (RED): each result carries ``low_confidence`` flagged by ``confidence_threshold``.
+
+    dry-run #1 showed sqlite-vec never returns fewer than k rows on a
+    populated DB, even for obviously irrelevant queries — so the UX has
+    to label results, not just count them.
+    """
+    db = str(tmp_path / "conf.db")
+    init_db(db)
+    _store_three_chunks(db)
+
+    # Threshold=0 → every (non-zero) distance is "above" → all low-confidence.
+    low = search(db, "MCP setup", embed_chunk, top_k=3, confidence_threshold=0.0)
+    assert len(low) == 3
+    assert all(r["low_confidence"] is True for r in low)
+
+    # Threshold=huge → nothing crosses it → no flags.
+    hi = search(db, "MCP setup", embed_chunk, top_k=3, confidence_threshold=1e6)
+    assert len(hi) == 3
+    assert all(r["low_confidence"] is False for r in hi)
+
+
+def test_search_default_confidence_threshold_filters_irrelevant(tmp_path):
+    """T13 (RED): a real "obviously irrelevant" query gets flagged low_confidence.
+
+    Verifies the v0 default threshold is tight enough to mark the
+    unrelated recursion chunk as low-confidence for an off-topic query.
+    """
+    db = str(tmp_path / "default-conf.db")
+    init_db(db)
+    _store_three_chunks(db)
+
+    # English-only, deliberately off-topic vs the stored 3 turns.
+    results = search(db, "the boiling point of water", embed_chunk, top_k=3)
+    assert len(results) == 3
+    # At least one must be flagged low_confidence — they're all off-topic.
+    assert any(r["low_confidence"] is True for r in results)
+
+
 def test_search_respects_top_k(tmp_path):
     """T9: top_k caps the number of results returned."""
     db = str(tmp_path / "topk.db")

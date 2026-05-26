@@ -126,6 +126,33 @@ def test_cli_import_chat(tmp_path: Path, warm_model: None) -> None:
     assert "sessions_inserted=1" in result.output
 
 
+def test_cli_search_warns_when_all_low_confidence(tmp_path: Path, warm_model: None) -> None:
+    """T13 (RED): if every hit is low-confidence, CLI prints a warning line."""
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)
+
+    runner.invoke(
+        app,
+        ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)],
+    )
+
+    # Force-low: threshold 0 means everything is low-confidence.
+    result = runner.invoke(
+        app,
+        [
+            "search",
+            "How do I set up MCP servers?",
+            "--db", str(db_path),
+            "--top-k", "2",
+            "--min-confidence", "0",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "low-confidence" in result.output.lower() or "low confidence" in result.output.lower()
+
+
 def test_cli_search_empty_db_shows_no_hits(tmp_path: Path, warm_model: None) -> None:
     runner = CliRunner()
     db_path = tmp_path / "mp.db"
