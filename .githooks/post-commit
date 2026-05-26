@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# post-commit: bump harness version when harness files change.
+# One-time setup: git config core.hooksPath .githooks
+set -e
+
+# Recursion guard: the bump script amends the commit, which re-fires post-commit.
+# The sentinel env var lets the nested invocation bail out immediately.
+if [[ "${HARNESS_BUMP_IN_PROGRESS:-0}" == "1" ]]; then
+  exit 0
+fi
+export HARNESS_BUMP_IN_PROGRESS=1
+
+exec bash "$(git rev-parse --show-toplevel)/scripts/harness-version-bump.sh"

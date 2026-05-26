@@ -1,0 +1,29 @@
+
+# Local files
+.claude/*
+!.claude/skills/
+!.claude/hooks/
+!.claude/agents/
+!.claude/settings.json
+docs/sum/
+docs/brainstorming/
+docs/reviews/
+docs/harness/*-skip
+docs/harness/*-done
+
+# OMC state and sessions (transient)
+.omc/
+bun-linux-x64/
+
+# mdBook
+book/
+mermaid.min.js
+mermaid-init.js
+
+# Human-facing one-off HTML artifacts (see artifacts/README.md)
+# Pattern: ignore everything under artifacts/, but keep README.md at any depth
+# so subdirectory structure is documented (recursive ** for nested subdirs).
+artifacts/**
+!artifacts/**/
+!artifacts/README.md
+!artifacts/**/README.md
