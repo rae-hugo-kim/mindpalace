@@ -20,10 +20,27 @@ def test_mask_jwt_pattern():
 
 
 def test_mask_password_keyword():
-    """T3 (RED): value after a password/passwd/pwd keyword must be masked, keyword preserved."""
+    """T3: value after a password/passwd/pwd keyword must be masked, keyword preserved."""
     text = "Connect with password: SuperSecret123! to login"
     result = mask_secrets(text)
     assert "SuperSecret123!" not in result
     assert "[MASKED]" in result
     # keyword preserved for context
     assert "password" in result.lower()
+
+
+def test_mask_plain_text_unchanged():
+    """T4 (regression net): text with no known secret patterns is returned as-is."""
+    text = "Hello world. This is a normal sentence with no secrets."
+    result = mask_secrets(text)
+    assert result == text
+
+
+def test_mask_multiple_secrets_in_one_text():
+    """E2 (regression net): all secret occurrences in a single text are masked."""
+    text = "key1=sk-abcdefghij12345 and password: foo123secret and bearer eyJaaaaaaaa.eyJbbbbbbbb.ccccccc done"
+    result = mask_secrets(text)
+    assert "sk-abcdefghij12345" not in result
+    assert "foo123secret" not in result
+    assert "eyJaaaaaaaa.eyJbbbbbbbb.ccccccc" not in result
+    assert result.count("[MASKED]") >= 3
