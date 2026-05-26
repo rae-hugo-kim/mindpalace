@@ -8,6 +8,7 @@ the vector distance and the original chunk metadata.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta
 from typing import Callable
 
 import sqlite_vec
@@ -145,3 +146,83 @@ def get_chunk_context(
         }
         for offset, r in enumerate(rows[lo:hi])
     ]
+
+
+def _parse_iso(ts: str) -> datetime | None:
+    """Tolerant ISO-8601 parse. Returns None on empty/unparseable input.
+
+    The corpus mixes Z-suffixed and offset-bearing timestamps; the
+    fromisoformat fallback accepts trailing Z as +00:00 on Python 3.11+.
+    """
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def find_neighbors(
+    db_path: str,
+    session_id: str,
+    window_days: float = 3.0,
+) -> list[dict]:
+    """Return opposite-source sessions whose timestamps fall within
+    ±``window_days`` of this session's anchor.
+
+    AC6 — the "약한 학습-작업 연결". A chat session (학습) and a code
+    session (작업) on adjacent days are likely about the same problem,
+    so this function joins them by time proximity, not content.
+
+    Anchor = MIN(chunks.timestamp) for the given session. Candidates
+    are sessions whose source differs and whose own anchor falls in
+    the window. Result rows include ``time_delta_days`` (signed:
+    positive = candidate is later than the query session).
+    Returns ``[]`` when the session_id is unknown or carries no
+    parseable timestamps.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        anchor_row = conn.execute(
+            "SELECT s.source, MIN(c.timestamp) "
+            "FROM sessions s LEFT JOIN chunks c ON c.session_id = s.session_id "
+            "WHERE s.session_id = ?",
+            (session_id,),
+        ).fetchone()
+
+        if anchor_row is None or anchor_row[0] is None:
+            return []
+        my_source, my_anchor_ts = anchor_row
+        my_anchor = _parse_iso(my_anchor_ts or "")
+        if my_anchor is None:
+            return []
+
+        candidates = conn.execute(
+            "SELECT s.session_id, s.source, s.title, MIN(c.timestamp) AS anchor "
+            "FROM sessions s JOIN chunks c ON c.session_id = s.session_id "
+            "WHERE s.source != ? AND s.session_id != ? "
+            "GROUP BY s.session_id "
+            "ORDER BY anchor",
+            (my_source, session_id),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    window = timedelta(days=window_days)
+    out: list[dict] = []
+    for sid, source, title, anchor_ts in candidates:
+        cand_anchor = _parse_iso(anchor_ts or "")
+        if cand_anchor is None:
+            continue
+        delta = cand_anchor - my_anchor
+        if abs(delta) <= window:
+            out.append(
+                {
+                    "session_id": sid,
+                    "source": source,
+                    "title": title,
+                    "anchor_timestamp": anchor_ts,
+                    "time_delta_days": delta.total_seconds() / 86400.0,
+                }
+            )
+    return out

@@ -23,6 +23,7 @@ from mindpalace.embedding import embed_chunk
 from mindpalace.parsing import parse_chat_json, parse_claude_code_jsonl
 from mindpalace.search import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    find_neighbors,
     get_chunk_context,
     search as search_chunks,
 )
@@ -131,6 +132,30 @@ def search_cmd(
                     ctx_text = ctx_text[:_TEXT_PREVIEW_CHARS] + "…"
                 arrow = "►" if ctx["is_hit"] else " "
                 typer.echo(f"        {arrow} {ctx['role']:>9}: {ctx_text}")
+
+
+@app.command("neighbors")
+def neighbors_cmd(
+    session_id: str = typer.Argument(..., help="Session whose neighbors to list."),
+    db: Path = typer.Option(..., "--db", help="SQLite DB path."),
+    days: float = typer.Option(3.0, "--days", help="Half-width of the time window (in days)."),
+) -> None:
+    """List opposite-source sessions within ±days of the given session."""
+    rows = find_neighbors(str(db), session_id=session_id, window_days=days)
+    if not rows:
+        typer.echo(
+            f"no neighbors within ±{days} days for session {session_id} "
+            f"(either no opposite-source sessions in range, or session_id unknown)."
+        )
+        return
+
+    typer.echo(f"{len(rows)} neighbor(s) within ±{days} days of {session_id}:")
+    for n in rows:
+        typer.echo(
+            f"  {n['time_delta_days']:+.2f}d  "
+            f"source={n['source']}  session={n['session_id']}  "
+            f"title={n['title']!r}  anchor={n['anchor_timestamp']}"
+        )
 
 
 def main() -> None:

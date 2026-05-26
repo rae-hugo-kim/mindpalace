@@ -4,7 +4,7 @@ Uses the real sentence-transformers model so the semantic ordering can be
 exercised end-to-end. Model is cached after the first run (see test_embedding).
 """
 from mindpalace.embedding import embed_chunk
-from mindpalace.search import get_chunk_context, search
+from mindpalace.search import find_neighbors, get_chunk_context, search
 from mindpalace.storage import init_db, store_session
 
 
@@ -195,6 +195,62 @@ def test_get_chunk_context_clamps_at_session_boundaries(tmp_path):
 
     tail = get_chunk_context(db, session_id="s7", turn_id="t6", window=3)
     assert [c["turn_id"] for c in tail] == ["t3", "t4", "t5", "t6"]
+
+
+def _make_dated_session(session_id: str, day: str, text: str = "anchor") -> dict:
+    """Single-turn session whose only turn carries the given ISO date."""
+    return {
+        "session_id": session_id,
+        "title": f"Session {session_id}",
+        "turns": [
+            {"turn_id": "t1", "role": "user", "text": text,
+             "timestamp": f"{day}T12:00:00Z", "parent_id": None},
+        ],
+        "extra": {},
+    }
+
+
+def test_find_neighbors_returns_opposite_source_within_window(tmp_path):
+    """T18 (RED): given a chat session, find_neighbors lists code sessions
+    whose timestamps fall within ±window_days, and vice versa.
+
+    Models the seed AC6 weak link: 학습(chat) ↔ 작업(code) within ±3 days.
+    """
+    db = str(tmp_path / "neigh.db")
+    init_db(db)
+    # chat "A" on day 0, code "B" on day +1 (in window), code "C" on day +30 (out).
+    store_session(db, _make_dated_session("A", "2026-05-26"), source="chat", embed_fn=embed_chunk)
+    store_session(db, _make_dated_session("B", "2026-05-27"), source="code", embed_fn=embed_chunk)
+    store_session(db, _make_dated_session("C", "2026-06-30"), source="code", embed_fn=embed_chunk)
+
+    neighbors = find_neighbors(db, session_id="A", window_days=3)
+    assert [n["session_id"] for n in neighbors] == ["B"]
+    n = neighbors[0]
+    assert n["source"] == "code"
+    assert n["title"] == "Session B"
+    assert "anchor_timestamp" in n
+    assert "time_delta_days" in n
+    # +1 day from anchor
+    assert abs(n["time_delta_days"] - 1.0) < 0.01
+
+
+def test_find_neighbors_excludes_same_source(tmp_path):
+    """T18 (RED): same-source sessions are not returned (chat≠code only)."""
+    db = str(tmp_path / "neigh-same.db")
+    init_db(db)
+    store_session(db, _make_dated_session("A", "2026-05-26"), source="chat", embed_fn=embed_chunk)
+    # Another chat session 1 day later — same source as A, must be excluded.
+    store_session(db, _make_dated_session("X", "2026-05-27"), source="chat", embed_fn=embed_chunk)
+
+    assert find_neighbors(db, session_id="A", window_days=3) == []
+
+
+def test_find_neighbors_unknown_session_returns_empty(tmp_path):
+    """T18 (RED): no matching session_id yields an empty list, not an error."""
+    db = str(tmp_path / "neigh-missing.db")
+    init_db(db)
+    store_session(db, _make_dated_session("A", "2026-05-26"), source="chat", embed_fn=embed_chunk)
+    assert find_neighbors(db, session_id="no-such", window_days=3) == []
 
 
 def test_get_chunk_context_unknown_turn_returns_empty(tmp_path):

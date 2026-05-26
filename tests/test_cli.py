@@ -126,6 +126,39 @@ def test_cli_import_chat(tmp_path: Path, warm_model: None) -> None:
     assert "sessions_inserted=1" in result.output
 
 
+def test_cli_neighbors_lists_opposite_source(tmp_path: Path, warm_model: None) -> None:
+    """T18 (RED): `mindpalace neighbors <chat_session>` lists the code session
+    imported on the same day. _write_code_jsonl and _write_chat_json both use
+    2026-05-26 timestamps so they are within the default ±3 day window.
+    """
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    chat_path = tmp_path / "chats.json"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)
+    _write_chat_json(chat_path)
+
+    runner.invoke(app, ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)])
+    runner.invoke(app, ["import", str(chat_path), "--source", "chat", "--db", str(db_path)])
+
+    # chat session uuid in _write_chat_json is "conv-1"; query its neighbors.
+    result = runner.invoke(
+        app,
+        ["neighbors", "conv-1", "--db", str(db_path), "--days", "3"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "session-abc" in result.output  # Code session UUID = file stem
+    assert "source=code" in result.output
+
+    # Missing session → friendly message, exit 0.
+    miss = runner.invoke(
+        app,
+        ["neighbors", "no-such-session", "--db", str(db_path)],
+    )
+    assert miss.exit_code == 0
+    assert "no neighbors" in miss.output
+
+
 def test_cli_search_context_flag_shows_neighbors(tmp_path: Path, warm_model: None) -> None:
     """T15 (RED): `--context 1` adds ±1 neighbor turns under each hit, with ► on the hit row."""
     runner = CliRunner()

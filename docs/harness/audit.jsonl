@@ -26,3 +26,5 @@
 {"ts":"2026-05-26T23:40:00+09:00","event":"ac_partial","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T14","ac":"AC5_meta_filters","implemented":["where_source"],"remaining":["where_session","where_time_range","where_title_like"]}}
 {"ts":"2026-05-27T00:00:00+09:00","event":"review_skipped","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T15","reason":"readonly_helper_4_tests_realdata_verify","review_skip_lifetime":"single_commit"}}
 {"ts":"2026-05-27T00:00:00+09:00","event":"ac_completed","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T15","ac":"AC4_context_window","implementation":"get_chunk_context_rowid_order_clamped"}}
+{"ts":"2026-05-27T00:25:00+09:00","event":"review_skipped","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T18","reason":"additive_4_tests_realdata_verify_confirms_seed_value_prop","review_skip_lifetime":"single_commit"}}
+{"ts":"2026-05-27T00:25:00+09:00","event":"ac_completed","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T18","ac":"AC6_weak_learn_work_link","implementation":"find_neighbors_time_window_default_3_days"}}
