@@ -42,6 +42,28 @@ def test_chunk_session_empty_turns():
     assert chunk_session(session, source="claude-chat") == []
 
 
+def test_chunk_session_skips_empty_text_turns():
+    """T12 (RED): turns whose text is empty / whitespace-only are not chunked.
+
+    Motivation (dry-run #1): ~12% of Code session turns serialised with
+    empty ``text`` (tool_use/tool_result placeholders) — they consumed
+    embedding compute, diluted search results, and bloated the DB.
+    """
+    session = {
+        "session_id": "s4",
+        "title": "T",
+        "turns": [
+            {"turn_id": "t1", "role": "user", "text": "real content", "timestamp": "", "parent_id": None},
+            {"turn_id": "t2", "role": "assistant", "text": "", "timestamp": "", "parent_id": None},
+            {"turn_id": "t3", "role": "user", "text": "   \n\t  ", "timestamp": "", "parent_id": None},
+            {"turn_id": "t4", "role": "assistant", "text": "another real one", "timestamp": "", "parent_id": None},
+        ],
+        "extra": {},
+    }
+    chunks = chunk_session(session, source="claude-code")
+    assert [c["turn_id"] for c in chunks] == ["t1", "t4"]
+
+
 def test_chunk_session_source_value_threaded():
     """T6: source argument is propagated unchanged to every chunk."""
     session = {

@@ -23,6 +23,9 @@ def chunk_session(session: dict, source: str) -> list[dict]:
     title = session.get("title")
     extra = session.get("extra", {})
     for turn in session.get("turns", []):
+        text = turn.get("text", "")
+        if not text.strip():
+            continue
         turn_id = turn.get("turn_id", "")
         chunks.append(
             {

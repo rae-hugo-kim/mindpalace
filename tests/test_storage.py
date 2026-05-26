@@ -77,6 +77,33 @@ def test_store_session_dedup_on_reimport(tmp_path):
     assert count_chunks(db) == 2
 
 
+def test_store_session_skips_empty_text_turns(tmp_path):
+    """T12 (RED): turns whose text is empty / whitespace-only are not stored.
+
+    Mirrors the chunker policy: dry-run #1 showed 12% of Code turns
+    have empty text (tool placeholders); storing them wastes the embed
+    call, the chunk row, and the vector slot.
+    """
+    db = str(tmp_path / "test.db")
+    init_db(db)
+    session = {
+        "session_id": "s9",
+        "title": "T",
+        "turns": [
+            {"turn_id": "t1", "role": "user", "text": "real one", "timestamp": "", "parent_id": None},
+            {"turn_id": "t2", "role": "assistant", "text": "", "timestamp": "", "parent_id": None},
+            {"turn_id": "t3", "role": "user", "text": "   \n\t  ", "timestamp": "", "parent_id": None},
+        ],
+        "extra": {},
+    }
+
+    result = store_session(db, session, source="claude-code", embed_fn=_fake_embed)
+
+    assert result["chunks_inserted"] == 1
+    assert result["dedup_skipped"] == 0
+    assert count_chunks(db) == 1
+
+
 def test_store_session_records_source_and_metadata(tmp_path):
     """T8: source + session-level metadata (title, extra) are retrievable."""
     db = str(tmp_path / "test.db")

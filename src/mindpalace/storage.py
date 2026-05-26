@@ -121,8 +121,11 @@ def store_session(
         chunks_inserted = 0
         dedup_skipped = 0
         for turn in session.get("turns", []):
+            raw_text = turn.get("text", "")
+            if not raw_text.strip():
+                continue
             chunk_id = f"{session_id}:{turn.get('turn_id', '')}"
-            masked_text = mask_secrets(turn.get("text", ""))
+            masked_text = mask_secrets(raw_text)
 
             ch_cur = conn.execute(
                 "INSERT OR IGNORE INTO chunks "
