@@ -74,10 +74,20 @@ def search_cmd(
         "--min-confidence",
         help="L2 distance cut-off; hits above this are marked low-confidence.",
     ),
+    source: str | None = typer.Option(
+        None,
+        "--source",
+        help="Restrict to a single source (e.g. 'code' or 'chat').",
+    ),
 ) -> None:
     """Run a semantic search over stored chunks."""
     results = search_chunks(
-        str(db), query, embed_chunk, top_k=top_k, confidence_threshold=min_confidence
+        str(db),
+        query,
+        embed_chunk,
+        top_k=top_k,
+        confidence_threshold=min_confidence,
+        where_source=source,
     )
 
     if not results:

@@ -22,3 +22,5 @@
 {"ts":"2026-05-26T22:55:00+09:00","event":"empirical_finding","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T12_verify","sample":"mindpalace_8683e0ab.jsonl","chunks_before":633,"chunks_after":139,"reduction_pct":78}}
 {"ts":"2026-05-26T23:20:00+09:00","event":"review_skipped","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T13","reason":"3_tests_realdata_verify_backwards_compat","review_skip_lifetime":"single_commit"}}
 {"ts":"2026-05-26T23:20:00+09:00","event":"ac_completed","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T13","ac":"AC12_zero_hit_ux","implementation":"distance_threshold_default_4.0_low_confidence_label"}}
+{"ts":"2026-05-26T23:40:00+09:00","event":"review_skipped","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T14","reason":"additive_kwarg_2_tests_realdata_verify","review_skip_lifetime":"single_commit"}}
+{"ts":"2026-05-26T23:40:00+09:00","event":"ac_partial","actor":"assistant","meta":{"task_id":"20260526-164034-85c0","cycle":"T14","ac":"AC5_meta_filters","implemented":["where_source"],"remaining":["where_session","where_time_range","where_title_like"]}}

@@ -110,6 +110,48 @@ def test_search_default_confidence_threshold_filters_irrelevant(tmp_path):
     assert any(r["low_confidence"] is True for r in results)
 
 
+def test_search_filters_by_source(tmp_path):
+    """T14 (RED): ``where_source`` restricts hits to a single source.
+
+    Stores one chunk per source and queries with an explicit filter for
+    each. dry-run #1 showed chat:code = 9:1 in the live corpus, so
+    source filtering is the most-needed meta filter.
+    """
+    db = str(tmp_path / "src-filter.db")
+    init_db(db)
+    code_session = {
+        "session_id": "code-1",
+        "title": "Code session",
+        "turns": [
+            {"turn_id": "c1", "role": "user", "text": "Configure MCP server config", "timestamp": "T", "parent_id": None},
+        ],
+        "extra": {},
+    }
+    chat_session = {
+        "session_id": "chat-1",
+        "title": "Chat session",
+        "turns": [
+            {"turn_id": "m1", "role": "user", "text": "Configure MCP server config", "timestamp": "T", "parent_id": None},
+        ],
+        "extra": {},
+    }
+    store_session(db, code_session, source="code", embed_fn=embed_chunk)
+    store_session(db, chat_session, source="chat", embed_fn=embed_chunk)
+
+    code_only = search(db, "MCP server config", embed_chunk, top_k=5, where_source="code")
+    assert len(code_only) == 1
+    assert code_only[0]["source"] == "code"
+    assert code_only[0]["session_id"] == "code-1"
+
+    chat_only = search(db, "MCP server config", embed_chunk, top_k=5, where_source="chat")
+    assert len(chat_only) == 1
+    assert chat_only[0]["source"] == "chat"
+    assert chat_only[0]["session_id"] == "chat-1"
+
+    both = search(db, "MCP server config", embed_chunk, top_k=5)
+    assert {r["source"] for r in both} == {"code", "chat"}
+
+
 def test_search_respects_top_k(tmp_path):
     """T9: top_k caps the number of results returned."""
     db = str(tmp_path / "topk.db")

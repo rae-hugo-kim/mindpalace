@@ -126,6 +126,39 @@ def test_cli_import_chat(tmp_path: Path, warm_model: None) -> None:
     assert "sessions_inserted=1" in result.output
 
 
+def test_cli_search_source_filter(tmp_path: Path, warm_model: None) -> None:
+    """T14 (RED): `--source` flag restricts results to that source."""
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    chat_path = tmp_path / "chats.json"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)
+    _write_chat_json(chat_path)
+
+    runner.invoke(app, ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)])
+    runner.invoke(app, ["import", str(chat_path), "--source", "chat", "--db", str(db_path)])
+
+    # Without filter: chat session UUID "conv-1" can appear.
+    no_filter = runner.invoke(
+        app,
+        ["search", "MCP", "--db", str(db_path), "--top-k", "10"],
+    )
+    assert no_filter.exit_code == 0
+    assert "conv-1" in no_filter.output or "chat" in no_filter.output
+
+    # With --source code: chat session must not appear.
+    filtered = runner.invoke(
+        app,
+        ["search", "MCP", "--db", str(db_path), "--top-k", "10", "--source", "code"],
+    )
+    assert filtered.exit_code == 0, filtered.output
+    assert "conv-1" not in filtered.output
+    # All result lines must show "source=code".
+    for line in filtered.output.splitlines():
+        if "distance=" in line:
+            assert "source=code" in line, line
+
+
 def test_cli_search_warns_when_all_low_confidence(tmp_path: Path, warm_model: None) -> None:
     """T13 (RED): if every hit is low-confidence, CLI prints a warning line."""
     runner = CliRunner()

@@ -36,6 +36,7 @@ def search(
     embed_fn: EmbedFn,
     top_k: int = 5,
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    where_source: str | None = None,
 ) -> list[dict]:
     """Return the top-``top_k`` chunks most similar to ``query``.
 
@@ -47,23 +48,37 @@ def search(
     rows for a populated DB, so the flag is the only way for callers to
     distinguish "actually relevant" from "best of an irrelevant bunch".
     Empty DB or no matches -> empty list (no exception).
+
+    ``where_source`` (when set) restricts results to that source. Because
+    the sqlite-vec MATCH clause is evaluated before the JOIN-side
+    filter, we over-sample the vector match (``top_k * 20``, floor 100)
+    and then SQL-LIMIT down to ``top_k`` so the filter doesn't starve.
     """
     query_vec = embed_fn(query)
 
+    if where_source is None:
+        match_k = top_k
+    else:
+        match_k = max(top_k * 20, 100)
+
+    sql = """
+        SELECT c.chunk_id, c.session_id, c.title, c.role, c.text,
+               c.timestamp, c.source, v.distance
+        FROM chunk_vec v
+        JOIN chunks c ON c.rowid = v.rowid
+        WHERE v.embedding MATCH ?
+          AND k = ?
+    """
+    params: list = [sqlite_vec.serialize_float32(query_vec), match_k]
+    if where_source is not None:
+        sql += " AND c.source = ?"
+        params.append(where_source)
+    sql += " ORDER BY v.distance LIMIT ?"
+    params.append(top_k)
+
     conn = _connect(db_path)
     try:
-        rows = conn.execute(
-            """
-            SELECT c.chunk_id, c.session_id, c.title, c.role, c.text,
-                   c.timestamp, c.source, v.distance
-            FROM chunk_vec v
-            JOIN chunks c ON c.rowid = v.rowid
-            WHERE v.embedding MATCH ?
-              AND k = ?
-            ORDER BY v.distance
-            """,
-            (sqlite_vec.serialize_float32(query_vec), top_k),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     finally:
         conn.close()
 
