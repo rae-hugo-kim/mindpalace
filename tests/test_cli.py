@@ -126,6 +126,29 @@ def test_cli_import_chat(tmp_path: Path, warm_model: None) -> None:
     assert "sessions_inserted=1" in result.output
 
 
+def test_cli_search_context_flag_shows_neighbors(tmp_path: Path, warm_model: None) -> None:
+    """T15 (RED): `--context 1` adds ±1 neighbor turns under each hit, with ► on the hit row."""
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)
+
+    runner.invoke(app, ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)])
+
+    result = runner.invoke(
+        app,
+        ["search", "How do I set up MCP servers?", "--db", str(db_path),
+         "--top-k", "1", "--context", "1"],
+    )
+    assert result.exit_code == 0, result.output
+    # Exactly one ► marker (the hit row in its own context block).
+    assert result.output.count("►") == 1
+    # The hit's neighboring turns from _write_code_jsonl should appear somewhere.
+    # The code JSONL contains a user/assistant pair around "MCP" and a separate
+    # "recursion" turn; with --context 1 the neighbor should show.
+    assert "MCP" in result.output
+
+
 def test_cli_search_source_filter(tmp_path: Path, warm_model: None) -> None:
     """T14 (RED): `--source` flag restricts results to that source."""
     runner = CliRunner()

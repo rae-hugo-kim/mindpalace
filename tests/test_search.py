@@ -4,7 +4,7 @@ Uses the real sentence-transformers model so the semantic ordering can be
 exercised end-to-end. Model is cached after the first run (see test_embedding).
 """
 from mindpalace.embedding import embed_chunk
-from mindpalace.search import search
+from mindpalace.search import get_chunk_context, search
 from mindpalace.storage import init_db, store_session
 
 
@@ -150,6 +150,61 @@ def test_search_filters_by_source(tmp_path):
 
     both = search(db, "MCP server config", embed_chunk, top_k=5)
     assert {r["source"] for r in both} == {"code", "chat"}
+
+
+def _seven_turn_session(session_id: str = "s7") -> dict:
+    return {
+        "session_id": session_id,
+        "title": "Long session",
+        "turns": [
+            {"turn_id": f"t{i}", "role": "user" if i % 2 == 0 else "assistant",
+             "text": f"turn {i} content", "timestamp": f"2026-05-01T00:0{i}:00Z", "parent_id": None}
+            for i in range(7)
+        ],
+        "extra": {},
+    }
+
+
+def test_get_chunk_context_returns_neighbors_around_hit(tmp_path):
+    """T15 (RED): get_chunk_context returns the hit turn plus ±window neighbors.
+
+    AC4 — "검색 hit 청크와 해당 세션의 전후 컨텍스트(기본 청크 ±3, 파라미터)를 같이 표시할 수 있다".
+    """
+    db = str(tmp_path / "ctx.db")
+    init_db(db)
+    store_session(db, _seven_turn_session(), source="claude-code", embed_fn=embed_chunk)
+
+    context = get_chunk_context(db, session_id="s7", turn_id="t3", window=2)
+
+    # Hit at index 3, window=2 → expect turns 1..5 inclusive (5 entries).
+    assert [c["turn_id"] for c in context] == ["t1", "t2", "t3", "t4", "t5"]
+    # Exactly one row is the hit.
+    hits = [c for c in context if c["is_hit"]]
+    assert len(hits) == 1
+    assert hits[0]["turn_id"] == "t3"
+
+
+def test_get_chunk_context_clamps_at_session_boundaries(tmp_path):
+    """T15 (RED): window does not wrap past start/end of the session."""
+    db = str(tmp_path / "ctx-clamp.db")
+    init_db(db)
+    store_session(db, _seven_turn_session(), source="claude-code", embed_fn=embed_chunk)
+
+    head = get_chunk_context(db, session_id="s7", turn_id="t0", window=3)
+    assert [c["turn_id"] for c in head] == ["t0", "t1", "t2", "t3"]
+
+    tail = get_chunk_context(db, session_id="s7", turn_id="t6", window=3)
+    assert [c["turn_id"] for c in tail] == ["t3", "t4", "t5", "t6"]
+
+
+def test_get_chunk_context_unknown_turn_returns_empty(tmp_path):
+    """T15 (RED): unknown turn_id yields an empty list (no exception)."""
+    db = str(tmp_path / "ctx-missing.db")
+    init_db(db)
+    store_session(db, _seven_turn_session(), source="claude-code", embed_fn=embed_chunk)
+
+    assert get_chunk_context(db, session_id="s7", turn_id="nope") == []
+    assert get_chunk_context(db, session_id="no-such-session", turn_id="t0") == []
 
 
 def test_search_respects_top_k(tmp_path):

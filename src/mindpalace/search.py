@@ -96,3 +96,52 @@ def search(
         }
         for r in rows
     ]
+
+
+def get_chunk_context(
+    db_path: str,
+    session_id: str,
+    turn_id: str,
+    window: int = 3,
+) -> list[dict]:
+    """Return the hit chunk plus up to ``window`` neighbors on each side.
+
+    Neighbors are taken in chronological insert order within the same
+    session (``ORDER BY rowid``), which mirrors the turn order produced
+    by the parsers. The returned list is contiguous, clamps at session
+    boundaries, and tags exactly one row with ``is_hit=True`` (the row
+    whose ``turn_id`` matches the argument).
+
+    Returns ``[]`` for unknown sessions or unknown turn ids — callers
+    can treat absence as "no context available" without exception
+    handling.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT chunk_id, session_id, turn_id, role, text, timestamp, source "
+            "FROM chunks WHERE session_id = ? ORDER BY rowid",
+            (session_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    hit_idx = next((i for i, r in enumerate(rows) if r[2] == turn_id), -1)
+    if hit_idx == -1:
+        return []
+
+    lo = max(0, hit_idx - window)
+    hi = min(len(rows), hit_idx + window + 1)
+    return [
+        {
+            "chunk_id": r[0],
+            "session_id": r[1],
+            "turn_id": r[2],
+            "role": r[3],
+            "text": r[4],
+            "timestamp": r[5],
+            "source": r[6],
+            "is_hit": (lo + offset) == hit_idx,
+        }
+        for offset, r in enumerate(rows[lo:hi])
+    ]

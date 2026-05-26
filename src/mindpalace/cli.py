@@ -21,7 +21,11 @@ import typer
 
 from mindpalace.embedding import embed_chunk
 from mindpalace.parsing import parse_chat_json, parse_claude_code_jsonl
-from mindpalace.search import DEFAULT_CONFIDENCE_THRESHOLD, search as search_chunks
+from mindpalace.search import (
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    get_chunk_context,
+    search as search_chunks,
+)
 from mindpalace.storage import init_db, store_session
 
 app = typer.Typer(add_completion=False, help="Mindpalace personal knowledge vault.")
@@ -79,6 +83,12 @@ def search_cmd(
         "--source",
         help="Restrict to a single source (e.g. 'code' or 'chat').",
     ),
+    context: int = typer.Option(
+        0,
+        "--context",
+        "-c",
+        help="Show ±N surrounding turns from the same session under each hit.",
+    ),
 ) -> None:
     """Run a semantic search over stored chunks."""
     results = search_chunks(
@@ -112,6 +122,15 @@ def search_cmd(
             f"source={hit['source']} role={hit['role']} "
             f"title={hit['title']!r}\n      {text}"
         )
+        if context > 0:
+            session_id = hit["session_id"]
+            turn_id = hit["chunk_id"][len(session_id) + 1 :]
+            for ctx in get_chunk_context(str(db), session_id, turn_id, window=context):
+                ctx_text = (ctx["text"] or "").replace("\n", " ")
+                if len(ctx_text) > _TEXT_PREVIEW_CHARS:
+                    ctx_text = ctx_text[:_TEXT_PREVIEW_CHARS] + "…"
+                arrow = "►" if ctx["is_hit"] else " "
+                typer.echo(f"        {arrow} {ctx['role']:>9}: {ctx_text}")
 
 
 def main() -> None:
