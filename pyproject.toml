@@ -4,7 +4,9 @@ version = "0.0.1"
 description = "Personal knowledge vault for Claude Code sessions and Claude web/desktop chats"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "sentence-transformers>=5.5.1",
+]
 
 [dependency-groups]
 dev = [
