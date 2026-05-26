@@ -1,0 +1,101 @@
+version: 1
+status: draft
+task_id: 20260526-164034-85c0
+revision: v0.1
+
+goal: >
+  Claude Code 세션 로그와 Claude 웹/데스크톱 채팅 세션을 수동 import해 raw로 보존하고
+  (단, raw 보존 전 secret 패턴 마스킹 적용), 파일 path/명령/도구/시간/표제어 등 메타데이터를
+  자동 추출하며, 자연어 쿼리로 시맨틱 검색하여 청크 매치 + 세션 컨텍스트로 결과를
+  계층적으로 표시하는 개인 지식저장창고를 로컬 호스팅(디스크 암호화 볼륨 위) +
+  Tailscale/VPN mesh 접근 가능한 웹 UI로 v0 구축한다.
+
+constraints:
+  # v0 범위 제약 (기존)
+  - 자동 인입(gmail 자동 sync, Claude API 자동 끌어오기)은 v0 범위에서 제외 (v1 이후)
+  - ingest 시점에 무거운 요약/개념 카드를 자동 생성하지 않는다 (학습 수준 굳음 방지 — 가공은 lazy)
+  - 데이터는 로컬에만 저장. 클라우드 DB/스토리지 사용 금지
+  - 공개 URL/외부 인증 시스템 노출 금지. 접근은 Tailscale/VPN mesh 내 본인 기기로 한정
+  - 다중 사용자 지원하지 않음 (1인 도구)
+  - 삽질 방지 시스템(이슈/sum 자동화)은 별도 영역으로 분리하므로 본 작업 범위 아님
+  - 일반 노트(회의록/책 메모) 통합은 v0 범위 아님 — Claude 기록만
+  - 모바일 네이티브 앱은 만들지 않음 (모바일 브라우저 웹 UI 접근은 허용)
+  - 애플리케이션 기술 스택(언어/프레임워크/벡터 DB/임베딩 모델)은 startdev 단계에서 결정
+
+  # v0.1 보강: 보안 (CRITICAL #2 해소)
+  - import 파이프라인에서 raw 보존 직전에 secret 패턴(API key, OAuth/JWT 토큰, sk-... 형식 키, password 키워드 인근 값 등)을 마스킹한다. 원본 raw 저장본에 평문 secret이 남지 않는다.
+  - DB 파일 디렉터리는 OS 디스크 암호화 볼륨(LUKS / FileVault / BitLocker 등) 위에 배치한다. 미설정 환경에서 import 명령은 명시적 경고를 출력하고, 사용자가 명시적으로 `--accept-unencrypted`를 주지 않는 한 진행을 막는다.
+
+  # v0.1 보강: 데이터 모델
+  - raw 저장본은 immutable로 취급한다 (마스킹 후 원본은 변경하지 않음). 임베딩과 메타데이터 인덱스는 derived data로 분리하여 스키마 변경 시 raw에서 재생성하는 재인덱싱 스크립트를 보유한다.
+  - dedup 키는 (1) import source가 제공하는 세션 ID, (2) 없으면 마스킹 후 raw 전체의 SHA-256 content hash 순으로 적용한다.
+  - 약한 학습-작업 연결의 시간 윈도 기본값은 ±3일. 파라미터화하되 v0 기본값으로 고정한다.
+
+  # v0.1 보강: 사전 조건 (CRITICAL #1 해소 절차)
+  - Claude 채팅 export 모듈은 사용자가 본인 Claude 계정에서 데이터 export를 1건 받아 실제 스키마를 확인한 후에 구현한다 (startdev 진입 전 또는 startdev sprint 0). 그 전까지 채팅 import 코드는 placeholder만 두고 Code 세션 import 먼저 구현해도 무방.
+
+acceptance_criteria:
+  # 기능 AC (기존)
+  - "Claude Code 세션 파일과 Claude 웹/데스크톱 export 파일 모두 수동 import 후 DB에 raw 보존된다 (단, 채팅 export 스키마는 사용자 샘플 확보 후 확정)"
+  - "Code 세션 import 시 등장 파일 path/명령/도구/에러가 인덱싱되고, 채팅 import 시 시간/표제어가 인덱싱된다"
+  - "자연어 쿼리로 청크 단위 시맨틱 매치 결과가 반환된다"
+  - "검색 hit 청크와 해당 세션의 전후 컨텍스트(기본 청크 ±3, 파라미터)를 같이 표시할 수 있다"
+  - "시간 범위, 파일 path, 도메인 메타데이터로 결과 좁히기 필터가 작동한다"
+  - "검색 결과에 ±3일 윈도 내 다른 영역(학습=chat / 작업=code) 세션 후보가 함께 표시된다"
+  - "본인의 다른 기기에서 Tailscale mesh 내 IP를 통해 웹 UI 접속해 검색·결과 확인이 가능하다"
+  - "핵심 경로(import → 마스킹 → 임베딩 → 검색) end-to-end 자동 테스트가 최소 1개 통과한다"
+
+  # v0.1 보강 AC: 보안
+  - "테스트 입력에 'sk-...' 형식 키, JWT, password 키워드 등을 삽입해 import 시 raw 저장본에서 해당 평문이 검출되지 않는다 (마스킹 회귀 테스트 통과)"
+  - "DB 디렉터리가 비암호화 볼륨 위에 있는 경우 import 명령이 경고를 출력하고 기본적으로 막힌다 (override 플래그 명시 시에만 진행)"
+
+  # v0.1 보강 AC: 운영 품질
+  - "검색 쿼리 P95 응답 시간이 로컬 인덱스 1만 청크 기준 ≤ 2초 (측정 로그 보유)"
+  - "검색 결과 0건일 때 명시적 빈 상태 안내와 쿼리 완화 힌트(예: 메타 필터 해제 제안)가 표시된다"
+  - "같은 세션 ID 또는 동일 content hash의 재import 시 중복 저장이 발생하지 않는다 (dedup 회귀 테스트 통과)"
+  - "import 결과(성공/실패/마스킹 적용 수), 임베딩 실패 카운터, 검색 지연이 로그로 기록된다"
+
+out_of_scope:
+  - 자동 인입 파이프라인(gmail/Claude API 자동 sync)
+  - ingest 시점 LLM 가공(요약/개념 카드 자동 생성)
+  - 클라우드 호스팅 및 공개 URL 노출
+  - 다중 사용자/협업/공유 기능
+  - 일반 노트(회의록/책 메모) 통합
+  - 모바일 네이티브 앱
+  - 삽질 방지/이슈 추적 시스템
+  - 본인 행동 검증 지표(매일 사용량/시나리오 매칭률 같은 정량 지표)
+  - 정량 검색 품질 지표(recall@k 측정 인프라) — v0에는 응답시간/0-hit UX만, 품질 정량은 v1
+  - mesh 접속 fallback 검증 경로(미설치 시 대안) — v1
+  - 대용량 세션(>50k 토큰) 회귀 테스트 — v1
+
+assumptions:
+  - Claude Code 세션 로그는 로컬 디스크에 접근 가능한 형태(JSONL 등)로 존재한다
+  - Claude 웹/데스크톱 채팅은 사용자가 본인 계정에서 데이터 export를 받을 수 있다 (실제 스키마는 사용자 샘플로 확정)
+  - 임베딩 모델은 외부 API(OpenAI/Voyage 등) 또는 로컬 모델(예 sentence-transformers) 중 startdev에서 선택 가능하다
+  - Tailscale 또는 동등한 mesh VPN은 사용자가 OS 레벨에서 별도 설치/설정한다 (앱은 0.0.0.0 바인딩만 책임)
+  - 사용자 머신은 OS 디스크 암호화(LUKS / FileVault / BitLocker)가 이미 활성화되어 있거나 활성화할 수 있다
+  - 저장 단위는 세션 단위 raw(마스킹 후)로 보존하되, 임베딩은 더 작은 청크(turn 단위 또는 의미 단락) 단위로 한다
+  - 표시는 청크 hit + 세션 컨텍스트(기본 청크 ±3) 확장의 계층 구조를 따른다
+  - dedup 키는 (세션 ID) 우선, (content hash) 보조
+
+risks:
+  - 큰 Claude Code 세션(수만 토큰)의 청킹/임베딩 비용·시간 폭발
+  - Claude 웹/데스크톱 export 포맷이 비공식/변경 가능 → 사용자 샘플 확보로 1차 완화, 향후 포맷 변경 시 파서 재작성 필요
+  - 시맨틱 검색이 표면 단어에 휘둘려 본인이 찾는 사건이 안 잡힐 가능성 (브레인스토밍에서 명시된 함정)
+  - 검색 결과 dilution (한 세션에 여러 주제 섞일 때 임베딩 평균화로 매치 약화) — 청크 단위 임베딩으로 1차 완화
+  - 임베딩 API 비용·지연·실패 처리 누락 시 import 자체가 막힘 — retry + 재시도 큐 + 로그로 1차 완화
+  - mesh 접근을 가정했으나 사용자가 mesh 미설치 시 AC 7 검증 불가 — v0에선 사전 확인으로 처리
+  - Secret 마스킹 정규식 커버리지 부족 → 미캡처 패턴 시 평문 노출. 마스킹 룰 회귀 테스트 + 신규 패턴 발견 시 추가 정책 필요
+  - 행동 검증 AC 부재 → 기술적으로 작동해도 "실제 유용성"은 v0 종료 시점에 미검증 (사용자 의도된 트레이드오프 — 1주일 사용 후 별도 정성 평가 권고)
+
+references:
+  - path: docs/harness/kickoff-summary.md
+    reason: 본 kickoff의 전체 요약 (인간 가독). JTBD/Context/Scope/AC/Backpressure 한 문서로
+  - path: docs/harness/plan-attack-report.md
+    reason: 적대적 검증 결과. v0.1 보강 항목의 근거
+  - path: docs/brainstorming/personal-knowledge-vault_2026-05-26_1509.md
+    reason: 발산 캡처본. 결정들의 사고 흐름과 원칙(write-heavy lazy-process, 계층 저장, 약한 연결, 가공 lazy 모드 등)이 verbatim 기록되어 있어 startdev에서 의도 복원에 필수
+  - path: CLAUDE.md
+    reason: 프로젝트 규칙. 변경 컨트롤/검증/문서 동기화 등 본 작업에도 적용
+  - path: docs/rules/seed_contract.md
+    reason: seed.yaml 컨트랙트 정의 (필수 필드 및 의미)
