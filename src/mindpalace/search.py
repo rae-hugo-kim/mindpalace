@@ -36,6 +36,41 @@ def _connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+def _chunk_filter_sql(
+    where_source: str | None,
+    where_since: str | None,
+    where_until: str | None,
+    where_title_like: str | None,
+    where_file_like: str | None,
+) -> tuple[str, list]:
+    """Build the AND-clauses shared by semantic and keyword search.
+
+    Returns (sql_fragment, params). Column refs use the alias ``c`` for
+    the chunks table.
+    """
+    sql = ""
+    params: list = []
+    if where_source is not None:
+        sql += " AND c.source = ?"
+        params.append(where_source)
+    if where_since is not None:
+        sql += " AND c.timestamp >= ?"
+        params.append(where_since)
+    if where_until is not None:
+        sql += " AND c.timestamp <= ?"
+        params.append(where_until)
+    if where_title_like is not None:
+        sql += " AND c.title LIKE ?"
+        params.append(f"%{where_title_like}%")
+    if where_file_like is not None:
+        sql += (
+            " AND c.session_id IN "
+            "(SELECT session_id FROM code_meta WHERE files_json LIKE ?)"
+        )
+        params.append(f"%{where_file_like}%")
+    return sql, params
+
+
 def search(
     db_path: str,
     query: str,
@@ -99,24 +134,11 @@ def search(
           AND k = ?
     """
     params: list = [sqlite_vec.serialize_float32(query_vec), match_k]
-    if where_source is not None:
-        sql += " AND c.source = ?"
-        params.append(where_source)
-    if where_since is not None:
-        sql += " AND c.timestamp >= ?"
-        params.append(where_since)
-    if where_until is not None:
-        sql += " AND c.timestamp <= ?"
-        params.append(where_until)
-    if where_title_like is not None:
-        sql += " AND c.title LIKE ?"
-        params.append(f"%{where_title_like}%")
-    if where_file_like is not None:
-        sql += (
-            " AND c.session_id IN "
-            "(SELECT session_id FROM code_meta WHERE files_json LIKE ?)"
-        )
-        params.append(f"%{where_file_like}%")
+    filter_sql, filter_params = _chunk_filter_sql(
+        where_source, where_since, where_until, where_title_like, where_file_like
+    )
+    sql += filter_sql
+    params += filter_params
     sql += " ORDER BY v.distance LIMIT ?"
     params.append(top_k)
 
@@ -137,12 +159,104 @@ def search(
             "source": r[6],
             "distance": float(r[7]),
             "low_confidence": float(r[7]) > confidence_threshold,
+            "match": "semantic",
         }
         for r in rows
     ]
     latency_ms = (time.perf_counter() - t0) * 1000.0
     _log.info("search query=%r latency_ms=%.2f hits=%d", query, latency_ms, len(results))
     return results
+
+
+def keyword_search(
+    db_path: str,
+    query: str,
+    top_k: int = 5,
+    where_source: str | None = None,
+    where_since: str | None = None,
+    where_until: str | None = None,
+    where_title_like: str | None = None,
+    where_file_like: str | None = None,
+) -> list[dict]:
+    """Substring (LIKE) search over chunk text — the lexical complement to
+    semantic ``search``.
+
+    Dense embeddings represent rare proper nouns poorly (e.g. a drug brand
+    name transliterated into Korean), so the semantic ranker buries exact
+    matches under unrelated noise. A literal substring match recovers them.
+    Results share the semantic shape but carry ``match="keyword"`` and a
+    ``distance``/``low_confidence`` of None/False; ordered most-recent first.
+    The same meta filters apply.
+    """
+    sql = (
+        "SELECT c.chunk_id, c.session_id, c.title, c.role, c.text, "
+        "c.timestamp, c.source FROM chunks c WHERE c.text LIKE ?"
+    )
+    params: list = [f"%{query}%"]
+    filter_sql, filter_params = _chunk_filter_sql(
+        where_source, where_since, where_until, where_title_like, where_file_like
+    )
+    sql += filter_sql
+    sql += " ORDER BY c.timestamp DESC LIMIT ?"
+    params += filter_params
+    params.append(top_k)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+    return [
+        {
+            "chunk_id": r[0],
+            "session_id": r[1],
+            "title": r[2],
+            "role": r[3],
+            "text": r[4],
+            "timestamp": r[5],
+            "source": r[6],
+            "distance": None,
+            "low_confidence": False,
+            "match": "keyword",
+        }
+        for r in rows
+    ]
+
+
+def hybrid_search(
+    db_path: str,
+    query: str,
+    embed_fn: EmbedFn,
+    top_k: int = 5,
+    confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    where_source: str | None = None,
+    where_since: str | None = None,
+    where_until: str | None = None,
+    where_title_like: str | None = None,
+    where_file_like: str | None = None,
+) -> dict:
+    """Run keyword + semantic search and return both, de-duplicated.
+
+    Returns {"keyword": [...], "semantic": [...]} where the semantic list
+    excludes any chunk already present as a keyword (exact) match — keyword
+    hits are the higher-confidence answer for term recall, so they win.
+    """
+    filters = dict(
+        where_source=where_source,
+        where_since=where_since,
+        where_until=where_until,
+        where_title_like=where_title_like,
+        where_file_like=where_file_like,
+    )
+    keyword = keyword_search(db_path, query, top_k=top_k, **filters)
+    semantic = search(
+        db_path, query, embed_fn, top_k=top_k,
+        confidence_threshold=confidence_threshold, **filters,
+    )
+    kw_ids = {r["chunk_id"] for r in keyword}
+    semantic = [r for r in semantic if r["chunk_id"] not in kw_ids]
+    return {"keyword": keyword, "semantic": semantic}
 
 
 def get_code_meta(db_path: str, session_id: str) -> dict | None:

@@ -24,7 +24,7 @@ from mindpalace.search import (
     get_chunk_context,
     get_code_meta,
     get_session_turns,
-    search as search_chunks,
+    hybrid_search,
 )
 
 _DEFAULT_CONTEXT = 2
@@ -144,6 +144,8 @@ def _render_hit(
     low = hit.get("low_confidence")
     cls = "hit low" if low else "hit"
     warn = ' <span class="warn">⚠ low-confidence</span>' if low else ""
+    distance = hit.get("distance")
+    score = "exact match" if distance is None else f"distance={distance:.4f}"
     nlink = (
         '<div class="nlink">'
         f'<a href="/session?session_id={sid_q}&hl={html.escape(turn_id)}">📄 전체 세션</a>'
@@ -152,7 +154,7 @@ def _render_hit(
     )
     return (
         f'<div class="{cls}">'
-        f'<div class="meta">[{i}] distance={hit["distance"]:.4f} · '
+        f'<div class="meta">[{i}] {score} · '
         f"source={source} · role={role} · title={title}{warn}</div>"
         f"<div>{text}</div>"
         f"{_code_meta_badge(code_meta)}"
@@ -192,7 +194,7 @@ def create_app(db_path: str) -> FastAPI:
             return _PAGE_HEAD + body + _PAGE_TAIL
 
         t0 = time.perf_counter()
-        results = search_chunks(
+        out = hybrid_search(
             db_path,
             q,
             embed_chunk,
@@ -205,32 +207,19 @@ def create_app(db_path: str) -> FastAPI:
             where_file_like=file_like or None,
         )
         latency_ms = (time.perf_counter() - t0) * 1000.0
+        keyword, semantic = out["keyword"], out["semantic"]
+        total = len(keyword) + len(semantic)
 
-        body += f'<p class="latency">latency {latency_ms:.0f}ms · {len(results)} hits</p>'
+        body += (
+            f'<p class="latency">latency {latency_ms:.0f}ms · {total} hits '
+            f"(keyword {len(keyword)} · semantic {len(semantic)})</p>"
+        )
 
-        if not results:
-            active = [
-                name for name, val in (
-                    ("source", source), ("file_like", file_like), ("since", since),
-                    ("until", until), ("title_like", title_like),
-                ) if val
-            ]
-            hint = (
-                f" 활성 필터({', '.join(active)})를 해제하거나" if active
-                else " 소스 필터를 해제하거나"
-            )
-            body += (
-                f'<p class="empty">결과 없음 (0 hits) —{hint} 쿼리를 넓혀 보세요.</p>'
-            )
-        else:
-            if all(r["low_confidence"] for r in results):
-                body += (
-                    f'<p class="warn">high-confidence 매치 없음 — 아래 '
-                    f"{len(results)}건은 best-effort(모두 low-confidence)입니다.</p>"
-                )
-            meta_cache: dict[str, dict | None] = {}
+        meta_cache: dict[str, dict | None] = {}
+
+        def _render_list(hits: list[dict]) -> str:
             parts = []
-            for i, h in enumerate(results, start=1):
+            for i, h in enumerate(hits, start=1):
                 cm = None
                 sid = h["session_id"]
                 if h.get("source") == "code":
@@ -242,7 +231,35 @@ def create_app(db_path: str) -> FastAPI:
                     turn_id = h["chunk_id"][len(sid) + 1:]
                     ctx_rows = get_chunk_context(db_path, sid, turn_id, window=context)
                 parts.append(_render_hit(i, h, code_meta=cm, context_rows=ctx_rows))
-            body += "".join(parts)
+            return "".join(parts)
+
+        if total == 0:
+            active = [
+                name for name, val in (
+                    ("source", source), ("file_like", file_like), ("since", since),
+                    ("until", until), ("title_like", title_like),
+                ) if val
+            ]
+            hint = (
+                f" 활성 필터({', '.join(active)})를 해제하거나" if active
+                else " 소스 필터를 해제하거나"
+            )
+            body += f'<p class="empty">결과 없음 (0 hits) —{hint} 쿼리를 넓혀 보세요.</p>'
+            return _PAGE_HEAD + body + _PAGE_TAIL
+
+        if keyword:
+            body += f'<h3>🔑 정확히 일치 (keyword) — {len(keyword)}</h3>'
+            body += _render_list(keyword)
+
+        if semantic:
+            if all(r["low_confidence"] for r in semantic):
+                body += (
+                    f'<p class="warn">🧭 semantic — high-confidence 매치 없음, 아래 '
+                    f"{len(semantic)}건은 best-effort(모두 low-confidence)입니다.</p>"
+                )
+            else:
+                body += f"<h3>🧭 semantic — {len(semantic)}</h3>"
+            body += _render_list(semantic)
 
         return _PAGE_HEAD + body + _PAGE_TAIL
 

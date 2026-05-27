@@ -4,7 +4,13 @@ Uses the real sentence-transformers model so the semantic ordering can be
 exercised end-to-end. Model is cached after the first run (see test_embedding).
 """
 from mindpalace.embedding import embed_chunk
-from mindpalace.search import find_neighbors, get_chunk_context, search
+from mindpalace.search import (
+    find_neighbors,
+    get_chunk_context,
+    hybrid_search,
+    keyword_search,
+    search,
+)
 from mindpalace.storage import init_db, store_session
 
 
@@ -354,6 +360,69 @@ def test_search_logs_latency(tmp_path, caplog):
     msg = records[-1].getMessage()
     assert "latency_ms=" in msg
     assert "hits=2" in msg
+
+
+def _store_keyword_corpus(db: str) -> None:
+    """A rare proper noun ('마운자로') that the embedding model represents
+    poorly, plus unrelated content that semantic search prefers."""
+    store_session(db, {
+        "session_id": "drug", "title": "마운자로 부작용", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "user",
+                   "text": "마운자로 5mg 맞고 설사가 심한데 정상인가요?",
+                   "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
+    }, source="chat", embed_fn=embed_chunk)
+    store_session(db, {
+        "session_id": "mcp", "title": "MCP setup", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "user",
+                   "text": "How do I configure MCP servers in Claude Code?",
+                   "timestamp": "2026-05-11T00:00:00Z", "parent_id": None}],
+    }, source="code", embed_fn=embed_chunk)
+
+
+def test_keyword_search_finds_exact_substring(tmp_path):
+    """T29 (RED): keyword_search does a substring match the embedding misses.
+
+    '마운자로' (a drug brand name) is a rare proper noun the multilingual
+    model can't represent, so semantic search ranks it below noise; a LIKE
+    match nails it. Results carry match='keyword'.
+    """
+    db = str(tmp_path / "kw.db")
+    init_db(db)
+    _store_keyword_corpus(db)
+
+    res = keyword_search(db, "마운자로", top_k=10)
+    assert [r["session_id"] for r in res] == ["drug"]
+    assert res[0]["match"] == "keyword"
+    assert res[0]["distance"] is None  # keyword hits have no vector distance
+    # (semantic search buries this rare proper noun at corpus scale — see the
+    # real-vault investigation; not asserted here since a 2-chunk corpus is
+    # too small to reproduce the dilution.)
+
+
+def test_hybrid_search_merges_keyword_first_deduped(tmp_path):
+    """T29 (RED): hybrid_search returns {keyword, semantic}; semantic excludes
+    chunk_ids already shown as keyword matches."""
+    db = str(tmp_path / "hyb.db")
+    init_db(db)
+    _store_keyword_corpus(db)
+
+    out = hybrid_search(db, "마운자로", embed_chunk, top_k=5)
+    assert "keyword" in out and "semantic" in out
+    kw_ids = {r["chunk_id"] for r in out["keyword"]}
+    assert "drug:t1" in kw_ids
+    # no overlap between the two lists
+    sem_ids = {r["chunk_id"] for r in out["semantic"]}
+    assert kw_ids.isdisjoint(sem_ids)
+
+
+def test_keyword_search_respects_source_filter(tmp_path):
+    """T29 (RED): keyword_search honors the source filter like semantic does."""
+    db = str(tmp_path / "kwsrc.db")
+    init_db(db)
+    _store_keyword_corpus(db)
+    # 'MCP' substring exists only in the code session
+    res = keyword_search(db, "MCP", top_k=10, where_source="chat")
+    assert res == []
 
 
 def test_search_respects_top_k(tmp_path):

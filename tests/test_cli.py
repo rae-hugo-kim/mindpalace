@@ -425,6 +425,36 @@ def test_cli_reindex_rebuilds_and_search_still_works(tmp_path: Path, warm_model:
     assert "MCP" in after.output
 
 
+def test_cli_search_hybrid_surfaces_exact_keyword(tmp_path: Path, warm_model: None) -> None:
+    """T29 (RED): an exact rare term is surfaced via the keyword pass even
+    though the embedding ranks it poorly."""
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    db_path = tmp_path / "mp.db"
+    # write a chat-like session containing a rare proper noun
+    chat_path = tmp_path / "drug.json"
+    import json as _json
+    chat_path.write_text(_json.dumps({
+        "schema_version": 1,
+        "conversations": [{
+            "uuid": "c-drug", "name": "마운자로 부작용", "summary": "",
+            "created_at": "2026-05-10T00:00:00Z", "updated_at": "2026-05-10T00:00:00Z",
+            "chat_messages": [{"uuid": "m1", "sender": "human",
+                               "text": "마운자로 5mg 부작용 설사 정상인가요",
+                               "created_at": "2026-05-10T00:00:00Z",
+                               "parent_message_uuid": None}],
+        }],
+    }))
+    _write_code_jsonl(jsonl_path)  # unrelated MCP content
+    runner.invoke(app, ["import", str(chat_path), "--source", "chat", "--db", str(db_path)])
+    runner.invoke(app, ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)])
+
+    result = runner.invoke(app, ["search", "마운자로", "--db", str(db_path), "--top-k", "3"])
+    assert result.exit_code == 0, result.output
+    assert "마운자로" in result.output
+    assert "keyword" in result.output.lower() or "정확" in result.output
+
+
 def test_cli_search_warns_when_all_low_confidence(tmp_path: Path, warm_model: None) -> None:
     """T13 (RED): if every hit is low-confidence, CLI prints a warning line."""
     runner = CliRunner()

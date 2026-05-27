@@ -26,7 +26,7 @@ from mindpalace.search import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     find_neighbors,
     get_chunk_context,
-    search as search_chunks,
+    hybrid_search,
 )
 from mindpalace.security import detect_encryption
 from mindpalace.storage import init_db, reindex_vectors, store_session
@@ -174,9 +174,9 @@ def search_cmd(
         None, "--log-file", help="Operational log path (default: mindpalace.log next to the DB)."
     ),
 ) -> None:
-    """Run a semantic search over stored chunks."""
+    """Run a hybrid keyword + semantic search over stored chunks."""
     configure_logging(log_file or _default_log_file(db))
-    results = search_chunks(
+    out = hybrid_search(
         str(db),
         query,
         embed_chunk,
@@ -188,26 +188,20 @@ def search_cmd(
         where_title_like=title_like,
         where_file_like=file_like,
     )
+    keyword, semantic = out["keyword"], out["semantic"]
 
-    if not results:
-        typer.echo("no results (0 hits) — try removing filters or broadening the query.")
-        return
-
-    if all(r["low_confidence"] for r in results):
-        typer.echo(
-            f"no high-confidence matches for: {query}\n"
-            f"  showing top {len(results)} best-effort results below (all low-confidence)."
-        )
-    else:
-        typer.echo(f"{len(results)} hits for: {query}")
-
-    for i, hit in enumerate(results, start=1):
+    def _emit_hit(i: int, hit: dict) -> None:
         text = (hit["text"] or "").replace("\n", " ")
         if len(text) > _TEXT_PREVIEW_CHARS:
             text = text[:_TEXT_PREVIEW_CHARS] + "…"
-        marker = "⚠ " if hit["low_confidence"] else "  "
+        if hit.get("distance") is None:
+            score = "exact"
+            marker = "  "
+        else:
+            score = f"distance={hit['distance']:.4f}"
+            marker = "⚠ " if hit["low_confidence"] else "  "
         typer.echo(
-            f"{marker}[{i}] distance={hit['distance']:.4f} "
+            f"{marker}[{i}] {score} "
             f"source={hit['source']} role={hit['role']} "
             f"title={hit['title']!r}\n      {text}"
         )
@@ -220,6 +214,28 @@ def search_cmd(
                     ctx_text = ctx_text[:_TEXT_PREVIEW_CHARS] + "…"
                 arrow = "►" if ctx["is_hit"] else " "
                 typer.echo(f"        {arrow} {ctx['role']:>9}: {ctx_text}")
+
+    if not keyword and not semantic:
+        typer.echo("no results (0 hits) — try removing filters or broadening the query.")
+        return
+
+    if keyword:
+        typer.echo(f"🔑 keyword (정확히 일치) — {len(keyword)} hit(s) for: {query}")
+        for i, hit in enumerate(keyword, start=1):
+            _emit_hit(i, hit)
+
+    if semantic:
+        if all(r["low_confidence"] for r in semantic):
+            typer.echo(
+                f"🧭 semantic — no high-confidence matches; "
+                f"showing {len(semantic)} best-effort (all low-confidence)."
+            )
+        else:
+            typer.echo(f"🧭 semantic — {len(semantic)} hit(s)")
+        for i, hit in enumerate(semantic, start=1):
+            _emit_hit(i, hit)
+    elif keyword:
+        typer.echo("🧭 semantic — (none beyond the keyword matches above)")
 
 
 @app.command("neighbors")
