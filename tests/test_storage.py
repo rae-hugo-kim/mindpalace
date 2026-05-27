@@ -4,7 +4,13 @@ import sqlite3
 
 import pytest
 
-from mindpalace.storage import _connect, count_chunks, init_db, store_session
+from mindpalace.storage import (
+    _connect,
+    count_chunks,
+    init_db,
+    reindex_vectors,
+    store_session,
+)
 
 
 def _fake_embed(text: str) -> list[float]:
@@ -237,6 +243,40 @@ def test_store_session_counts_embed_failures_and_skips_chunk(tmp_path):
     missing = conn.execute("SELECT COUNT(*) FROM chunks WHERE chunk_id='ef1:t2'").fetchone()[0]
     conn.close()
     assert missing == 0
+
+
+def test_reindex_vectors_rebuilds_from_raw_chunks(tmp_path):
+    """T26 (RED): reindex_vectors rebuilds chunk_vec from chunks.text after
+    the vector table is wiped (seed constraint: derived data rebuildable
+    from the immutable raw layer). rowids stay aligned so search joins work."""
+    db = str(tmp_path / "reindex.db")
+    init_db(db)
+    store_session(db, _sample_session_with_secret(), source="code", embed_fn=_fake_embed)
+    assert count_chunks(db) == 2
+
+    # Simulate a model/schema change: wipe the derived vector index.
+    conn = _connect(db)
+    try:
+        conn.execute("DELETE FROM chunk_vec")
+        conn.commit()
+        assert conn.execute("SELECT COUNT(*) FROM chunk_vec").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+    result = reindex_vectors(db, embed_fn=_fake_embed)
+    assert result["reindexed"] == 2
+
+    conn = _connect(db)
+    try:
+        # one vector per chunk, rowids aligned to chunks.rowid
+        n_vec = conn.execute("SELECT COUNT(*) FROM chunk_vec").fetchone()[0]
+        aligned = conn.execute(
+            "SELECT COUNT(*) FROM chunks c JOIN chunk_vec v ON v.rowid = c.rowid"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert n_vec == 2
+    assert aligned == 2
 
 
 def test_store_session_records_source_and_metadata(tmp_path):

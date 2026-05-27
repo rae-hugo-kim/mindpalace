@@ -404,6 +404,27 @@ def test_cli_import_writes_log_file(tmp_path: Path, warm_model: None) -> None:
     assert "embed_failures=" in contents
 
 
+def test_cli_reindex_rebuilds_and_search_still_works(tmp_path: Path, warm_model: None) -> None:
+    """T26 (RED): `mindpalace reindex` rebuilds the vector index from stored
+    chunks; search returns the same hit afterwards."""
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)
+    runner.invoke(app, ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)])
+
+    result = runner.invoke(app, ["reindex", "--db", str(db_path)])
+    assert result.exit_code == 0, result.output
+    assert "reindex" in result.output.lower()
+    assert "3" in result.output  # 3 chunks re-embedded
+
+    after = runner.invoke(
+        app, ["search", "How do I set up MCP servers?", "--db", str(db_path), "--top-k", "2"]
+    )
+    assert after.exit_code == 0, after.output
+    assert "MCP" in after.output
+
+
 def test_cli_search_warns_when_all_low_confidence(tmp_path: Path, warm_model: None) -> None:
     """T13 (RED): if every hit is low-confidence, CLI prints a warning line."""
     runner = CliRunner()

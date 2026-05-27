@@ -29,7 +29,7 @@ from mindpalace.search import (
     search as search_chunks,
 )
 from mindpalace.security import detect_encryption
-from mindpalace.storage import init_db, store_session
+from mindpalace.storage import init_db, reindex_vectors, store_session
 
 app = typer.Typer(add_completion=False, help="Mindpalace personal knowledge vault.")
 
@@ -244,6 +244,19 @@ def neighbors_cmd(
             f"source={n['source']}  session={n['session_id']}  "
             f"title={n['title']!r}  anchor={n['anchor_timestamp']}"
         )
+
+
+@app.command("reindex")
+def reindex_cmd(
+    db: Path = typer.Option(..., "--db", help="SQLite DB path."),
+    log_file: str | None = typer.Option(
+        None, "--log-file", help="Operational log path (default: mindpalace.log next to the DB)."
+    ),
+) -> None:
+    """Rebuild the vector index from stored chunks (after a model/schema change)."""
+    configure_logging(log_file or _default_log_file(db))
+    result = reindex_vectors(str(db), embed_chunk)
+    typer.echo(f"reindex complete: reindexed={result['reindexed']} chunks")
 
 
 @app.command("serve")

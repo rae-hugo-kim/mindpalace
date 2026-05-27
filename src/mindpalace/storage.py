@@ -99,6 +99,37 @@ def count_chunks(db_path: str) -> int:
         conn.close()
 
 
+def reindex_vectors(db_path: str, embed_fn: EmbedFn) -> dict:
+    """Rebuild the derived ``chunk_vec`` index from the raw ``chunks`` rows.
+
+    The seed treats ``chunks`` (post-masking) as the immutable raw layer
+    and ``chunk_vec`` as derived data that must be regeneratable when the
+    embedding model or vector schema changes. This drops every vector and
+    re-embeds each chunk's stored text, reinserting with the same rowid so
+    the chunks↔chunk_vec join stays aligned.
+
+    Returns {"reindexed": <count>}.
+    """
+    conn = _connect(db_path)
+    try:
+        conn.execute("DELETE FROM chunk_vec")
+        rows = conn.execute("SELECT rowid, text FROM chunks ORDER BY rowid").fetchall()
+        reindexed = 0
+        for rowid, text in rows:
+            vector = embed_fn(text)
+            conn.execute(
+                "INSERT INTO chunk_vec(rowid, embedding) VALUES (?, ?)",
+                (rowid, sqlite_vec.serialize_float32(vector)),
+            )
+            reindexed += 1
+        conn.commit()
+    finally:
+        conn.close()
+
+    _log.info("reindex complete reindexed=%d", reindexed)
+    return {"reindexed": reindexed}
+
+
 def store_session(
     db_path: str,
     session: dict,
