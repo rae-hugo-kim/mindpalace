@@ -23,8 +23,11 @@ from mindpalace.search import (
     find_neighbors,
     get_chunk_context,
     get_code_meta,
+    get_session_turns,
     search as search_chunks,
 )
+
+_DEFAULT_CONTEXT = 2
 
 _PAGE_HEAD = """<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -62,7 +65,7 @@ def _form(
     since: str = "",
     until: str = "",
     title_like: str = "",
-    context: int = 0,
+    context: int = _DEFAULT_CONTEXT,
 ) -> str:
     qs = html.escape(q)
     code_sel = " selected" if source == "code" else ""
@@ -133,12 +136,17 @@ def _render_hit(
     role = html.escape(hit.get("role") or "")
     source = html.escape(hit.get("source") or "")
     session_id = hit.get("session_id") or ""
+    chunk_id = hit.get("chunk_id") or ""
+    turn_id = chunk_id[len(session_id) + 1:] if chunk_id.startswith(session_id + ":") else ""
+    sid_q = html.escape(session_id)
     low = hit.get("low_confidence")
     cls = "hit low" if low else "hit"
     warn = ' <span class="warn">⚠ low-confidence</span>' if low else ""
     nlink = (
-        f'<div class="nlink"><a href="/neighbors?session_id={html.escape(session_id)}">'
-        "↔ neighbors (학습↔작업)</a></div>"
+        '<div class="nlink">'
+        f'<a href="/session?session_id={sid_q}&hl={html.escape(turn_id)}">📄 전체 세션</a>'
+        f' · <a href="/neighbors?session_id={sid_q}">↔ neighbors (학습↔작업)</a>'
+        "</div>"
     )
     return (
         f'<div class="{cls}">'
@@ -169,7 +177,7 @@ def create_app(db_path: str) -> FastAPI:
         since: str = Query("", description="ISO lower bound on timestamp"),
         until: str = Query("", description="ISO upper bound on timestamp"),
         title_like: str = Query("", description="session title substring"),
-        context: int = Query(0, ge=0, le=10, description="±N surrounding turns"),
+        context: int = Query(_DEFAULT_CONTEXT, ge=0, le=10, description="±N surrounding turns"),
     ) -> str:
         body = _form(
             q=q, source=source, top_k=top_k,
@@ -264,6 +272,40 @@ def create_app(db_path: str) -> FastAPI:
                 f"<div>{title}</div>"
                 "</div>"
             )
+        return _PAGE_HEAD + body + _PAGE_TAIL
+
+    @app.get("/session", response_class=HTMLResponse)
+    def session_page(
+        session_id: str = Query(..., description="session to read in full"),
+        hl: str = Query("", description="turn_id to highlight (the search hit)"),
+    ) -> str:
+        s = get_session_turns(db_path, session_id)
+        if s is None:
+            body = (
+                f'<p class="empty">세션 {html.escape(session_id)} 을(를) 찾을 수 없습니다.</p>'
+                '<p><a href="/">← back to search</a></p>'
+            )
+            return _PAGE_HEAD + body + _PAGE_TAIL
+
+        title = html.escape(str(s.get("title") or ""))
+        source = html.escape(s.get("source") or "")
+        sid = html.escape(session_id)
+        body = f"<h2>{title}</h2>"
+        body += (
+            f'<p class="meta">source={source} · session={sid} · {len(s["turns"])} turns · '
+            f'<a href="/">← back to search</a> · '
+            f'<a href="/neighbors?session_id={sid}">↔ neighbors</a></p>'
+        )
+        parts = ['<div class="ctx">']
+        for t in s["turns"]:
+            is_hit = hl and t.get("turn_id") == hl
+            marker = "► " if is_hit else "  "
+            role = html.escape(t.get("role") or "")
+            text = html.escape(t.get("text") or "")
+            cls = "row hit" if is_hit else "row"
+            parts.append(f'<div class="{cls}">{marker}{role}: {text}</div>')
+        parts.append("</div>")
+        body += "".join(parts)
         return _PAGE_HEAD + body + _PAGE_TAIL
 
     return app

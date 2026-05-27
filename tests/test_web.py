@@ -196,6 +196,58 @@ def test_hit_links_to_neighbors(tmp_path: Path, warm_model: None) -> None:
     assert "/neighbors?session_id=" in resp.text
 
 
+def test_form_default_context_is_nonzero(tmp_path: Path, warm_model: None) -> None:
+    """T27 (RED): the form ships with context pre-set so hits show surrounding
+    turns out of the box (a lone short turn is meaningless on its own)."""
+    resp = TestClient(create_app(_populated_db(tmp_path))).get("/")
+    assert 'name="context" value="2"' in resp.text
+
+
+def test_search_default_shows_context(tmp_path: Path, warm_model: None) -> None:
+    """T27 (RED): a search with no explicit context still renders context rows."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/search", params={"q": "How do I set up MCP servers?", "top_k": 1})
+    assert resp.status_code == 200
+    assert 'class="ctx"' in resp.text
+
+
+def test_session_route_renders_full_session(tmp_path: Path, warm_model: None) -> None:
+    """T27 (RED): /session?session_id=… shows the whole session's turns in order
+    (the seed's third display level: chunk → ±N → full session context)."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/session", params={"session_id": "code-1"})
+    assert resp.status_code == 200
+    assert "How do I set up MCP servers in Claude Code?" in resp.text
+    assert "Use claude mcp add to register a stdio server." in resp.text
+    assert 'href="/"' in resp.text  # back-to-search link
+
+
+def test_session_route_highlights_hit_turn(tmp_path: Path, warm_model: None) -> None:
+    """T27 (RED): hl=<turn_id> marks the matched turn so the user lands on it."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/session", params={"session_id": "code-1", "hl": "t2"})
+    assert resp.status_code == 200
+    assert "►" in resp.text
+
+
+def test_session_route_unknown_friendly(tmp_path: Path, warm_model: None) -> None:
+    """T27 (RED): unknown session id → friendly message, still 200."""
+    resp = TestClient(create_app(_populated_db(tmp_path))).get(
+        "/session", params={"session_id": "no-such"}
+    )
+    assert resp.status_code == 200
+    assert "찾을 수 없" in resp.text  # friendly not-found
+    assert 'href="/"' in resp.text   # back-to-search link still offered
+
+
+def test_hit_links_to_session(tmp_path: Path, warm_model: None) -> None:
+    """T27 (RED): each hit links to its full-session view, carrying the hit turn."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/search", params={"q": "How do I set up MCP servers?", "top_k": 1})
+    assert resp.status_code == 200
+    assert "/session?session_id=" in resp.text
+
+
 def test_search_escapes_html_in_results(tmp_path: Path, warm_model: None) -> None:
     """XSS guard: stored/queried content must be HTML-escaped in the page."""
     db = str(tmp_path / "xss.db")

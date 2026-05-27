@@ -173,6 +173,42 @@ def get_code_meta(db_path: str, session_id: str) -> dict | None:
     }
 
 
+def get_session_turns(db_path: str, session_id: str) -> dict | None:
+    """Return a whole session for the full-session display level.
+
+    The seed's hierarchical display is chunk hit → ±N context → full
+    session; this backs the last level. Returns
+    {session_id, title, source, turns:[{turn_id, role, text, timestamp}]}
+    in stored (chronological) order, or None for an unknown session.
+    Only non-empty turns are stored, so that's what the reader shows.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        meta = conn.execute(
+            "SELECT title, source FROM sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        rows = conn.execute(
+            "SELECT turn_id, role, text, timestamp FROM chunks "
+            "WHERE session_id = ? ORDER BY rowid",
+            (session_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if meta is None:
+        return None
+    return {
+        "session_id": session_id,
+        "title": meta[0],
+        "source": meta[1],
+        "turns": [
+            {"turn_id": r[0], "role": r[1], "text": r[2], "timestamp": r[3]}
+            for r in rows
+        ],
+    }
+
+
 def get_chunk_context(
     db_path: str,
     session_id: str,
