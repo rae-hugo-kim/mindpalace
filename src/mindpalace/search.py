@@ -145,6 +145,34 @@ def search(
     return results
 
 
+def get_code_meta(db_path: str, session_id: str) -> dict | None:
+    """Return the extracted code metadata for a session, or None.
+
+    Reads the derived ``code_meta`` table (AC2). Returns a dict with
+    ``files``/``commands``/``tools`` (lists) and ``error_count`` (int),
+    or None when the session has no code metadata (e.g. chat sessions).
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT files_json, commands_json, tools_json, error_count "
+            "FROM code_meta WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    import json
+
+    return {
+        "files": json.loads(row[0]),
+        "commands": json.loads(row[1]),
+        "tools": json.loads(row[2]),
+        "error_count": row[3],
+    }
+
+
 def get_chunk_context(
     db_path: str,
     session_id: str,

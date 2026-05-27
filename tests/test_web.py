@@ -78,6 +78,80 @@ def test_search_empty_query_returns_form_or_message(tmp_path: Path, warm_model: 
     assert resp.status_code == 200
 
 
+def _db_with_code_meta(tmp_path: Path) -> str:
+    db = str(tmp_path / "meta-web.db")
+    init_db(db)
+    store_session(
+        db,
+        {"session_id": "code-search", "title": "Edited the ranker", "extra": {},
+         "turns": [{"turn_id": "t1", "role": "user", "text": "refactor the ranking logic",
+                    "timestamp": "2026-05-20T10:00:00Z", "parent_id": None}],
+         "code_meta": {"files": ["/proj/src/search.py"], "commands": ["pytest -q"],
+                       "tools": ["Edit", "Bash"], "error_count": 1}},
+        source="code", embed_fn=embed_chunk,
+    )
+    store_session(
+        db,
+        {"session_id": "code-storage", "title": "Edited storage", "extra": {},
+         "turns": [{"turn_id": "t1", "role": "user", "text": "refactor the ranking logic",
+                    "timestamp": "2026-01-05T10:00:00Z", "parent_id": None}],
+         "code_meta": {"files": ["/proj/src/storage.py"], "commands": [],
+                       "tools": ["Edit"], "error_count": 0}},
+        source="code", embed_fn=embed_chunk,
+    )
+    return db
+
+
+def test_search_form_has_meta_filter_inputs(tmp_path: Path, warm_model: None) -> None:
+    """T22 (RED): the search form exposes file/time/title filter inputs."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/")
+    assert resp.status_code == 200
+    for name in ("file_like", "since", "until", "title_like"):
+        assert f'name="{name}"' in resp.text, name
+
+
+def test_search_file_like_filter_in_web(tmp_path: Path, warm_model: None) -> None:
+    """T22 (RED): file_like query param restricts to sessions touching that file."""
+    client = TestClient(create_app(_db_with_code_meta(tmp_path)))
+    resp = client.get("/search", params={"q": "refactor the ranking", "top_k": 10,
+                                          "file_like": "search.py"})
+    assert resp.status_code == 200
+    assert "Edited the ranker" in resp.text
+    assert "Edited storage" not in resp.text
+
+
+def test_search_time_filter_in_web(tmp_path: Path, warm_model: None) -> None:
+    """T22 (RED): since/until bound results by timestamp."""
+    client = TestClient(create_app(_db_with_code_meta(tmp_path)))
+    resp = client.get("/search", params={"q": "refactor the ranking", "top_k": 10,
+                                          "since": "2026-05-01", "until": "2026-06-01"})
+    assert resp.status_code == 200
+    # Only the May session (code-search) is in window; January one excluded.
+    assert "Edited the ranker" in resp.text
+    assert "Edited storage" not in resp.text
+
+
+def test_search_displays_latency(tmp_path: Path, warm_model: None) -> None:
+    """T22 (RED, AC15 surfacing): results page shows query latency in ms."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/search", params={"q": "How do I set up MCP servers?"})
+    assert resp.status_code == 200
+    assert "ms" in resp.text
+    assert "latency" in resp.text.lower()
+
+
+def test_search_shows_code_meta_badge(tmp_path: Path, warm_model: None) -> None:
+    """T22 (RED): code hits show a metadata badge (files/tools/errors)."""
+    client = TestClient(create_app(_db_with_code_meta(tmp_path)))
+    resp = client.get("/search", params={"q": "refactor the ranking", "top_k": 10,
+                                          "file_like": "search.py"})
+    assert resp.status_code == 200
+    # badge reflects code_meta: 1 file, 2 tools, 1 error for code-search
+    assert "search.py" in resp.text
+    assert "errors=1" in resp.text or "1 error" in resp.text
+
+
 def test_search_escapes_html_in_results(tmp_path: Path, warm_model: None) -> None:
     """XSS guard: stored/queried content must be HTML-escaped in the page."""
     db = str(tmp_path / "xss.db")
