@@ -282,6 +282,41 @@ def test_web_hybrid_keyword_section(tmp_path: Path, warm_model: None) -> None:
     assert "keyword" in resp.text.lower() or "정확" in resp.text
 
 
+def test_web_text_preserves_whitespace(tmp_path: Path, warm_model: None) -> None:
+    """T30 (RED): result text is rendered with pre-wrap so newlines / markdown
+    layout survive instead of collapsing into one run-on line."""
+    resp = TestClient(create_app(_populated_db(tmp_path))).get("/")
+    assert "pre-wrap" in resp.text
+
+
+def test_web_long_turn_is_collapsible(tmp_path: Path, warm_model: None) -> None:
+    """T30 (RED): a long assistant turn (agent reasoning wall) renders inside a
+    collapsible <details> so it doesn't flood the page; the full text is still
+    present in the DOM."""
+    db = str(tmp_path / "long.db")
+    init_db(db)
+    long_text = "ZQMARKER 사고 과정입니다. " + ("이것은 매우 긴 추론 텍스트입니다. " * 40)
+    store_session(db, {
+        "session_id": "s", "title": "긴 추론", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "assistant", "text": long_text,
+                   "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
+    }, source="chat", embed_fn=embed_chunk)
+
+    resp = TestClient(create_app(db)).get("/search", params={"q": "ZQMARKER", "top_k": 1})
+    assert resp.status_code == 200
+    assert "<details" in resp.text          # collapsed
+    assert "ZQMARKER" in resp.text           # full text still in DOM
+
+
+def test_web_roles_visually_distinguished(tmp_path: Path, warm_model: None) -> None:
+    """T30 (RED): turns carry a role class so user vs assistant can be told
+    apart at a glance."""
+    resp = TestClient(create_app(_populated_db(tmp_path))).get(
+        "/search", params={"q": "How do I set up MCP servers?", "top_k": 1}
+    )
+    assert "role-user" in resp.text or "role-assistant" in resp.text
+
+
 def test_search_escapes_html_in_results(tmp_path: Path, warm_model: None) -> None:
     """XSS guard: stored/queried content must be HTML-escaped in the page."""
     db = str(tmp_path / "xss.db")

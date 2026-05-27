@@ -52,6 +52,14 @@ _PAGE_HEAD = """<!doctype html>
  .ctx .row{color:#777;margin:.15rem 0}
  .ctx .row.hit{color:#111;font-weight:600;background:none;border:none;padding:0}
  .nlink{font-size:.8rem;margin-top:.35rem}
+ .turntext{white-space:pre-wrap;word-break:break-word}
+ details.turn>summary{cursor:pointer;color:#666;list-style:none}
+ details.turn>summary::-webkit-details-marker{display:none}
+ details.turn>summary::before{content:"▸ ";color:#999}
+ details.turn[open]>summary::before{content:"▾ "}
+ details.turn>summary .pv{color:#888}
+ .role-user{border-left:3px solid #2b6cb0;padding-left:.5rem}
+ .role-assistant{border-left:3px solid #e2e8f0;padding-left:.5rem;color:#333}
 </style></head><body>
 <h1>mindpalace</h1>
 """
@@ -93,6 +101,31 @@ def _form(
 </form>"""
 
 
+_COLLAPSE_CHARS = 280
+
+
+def _turn_text(text: str, role: str = "", open_: bool = False) -> str:
+    """Render turn text with preserved whitespace; fold long turns.
+
+    Long turns (agent reasoning walls) collapse into a no-JS <details>
+    showing a one-line preview; the full text stays in the DOM. A role
+    class lets user vs assistant be told apart at a glance. ``open_``
+    expands the fold by default (used for the highlighted hit turn).
+    """
+    raw = text or ""
+    role_cls = f"role-{role}" if role in ("user", "assistant") else ""
+    escaped = html.escape(raw)
+    if len(raw) <= _COLLAPSE_CHARS:
+        return f'<div class="turntext {role_cls}">{escaped}</div>'
+    preview = html.escape(raw[:120].replace("\n", " "))
+    open_attr = " open" if open_ else ""
+    return (
+        f'<details class="turn {role_cls}"{open_attr}><summary>'
+        f'<span class="pv">{preview}…</span></summary>'
+        f'<div class="turntext">{escaped}</div></details>'
+    )
+
+
 def _code_meta_badge(meta: dict | None) -> str:
     """Render a compact code-metadata badge (AC2) for a code hit."""
     if not meta:
@@ -120,9 +153,9 @@ def _render_context(rows: list[dict]) -> str:
         is_hit = r.get("is_hit")
         marker = "► " if is_hit else "  "
         role = html.escape(r.get("role") or "")
-        text = html.escape(r.get("text") or "")
         cls = "row hit" if is_hit else "row"
-        parts.append(f'<div class="{cls}">{marker}{role}: {text}</div>')
+        body = _turn_text(r.get("text") or "", r.get("role") or "")
+        parts.append(f'<div class="{cls}">{marker}{role}: {body}</div>')
     parts.append("</div>")
     return "".join(parts)
 
@@ -134,7 +167,6 @@ def _render_hit(
     context_rows: list[dict] | None = None,
 ) -> str:
     title = html.escape(str(hit.get("title") or ""))
-    text = html.escape(hit.get("text") or "")
     role = html.escape(hit.get("role") or "")
     source = html.escape(hit.get("source") or "")
     session_id = hit.get("session_id") or ""
@@ -156,7 +188,7 @@ def _render_hit(
         f'<div class="{cls}">'
         f'<div class="meta">[{i}] {score} · '
         f"source={source} · role={role} · title={title}{warn}</div>"
-        f"<div>{text}</div>"
+        f"{_turn_text(hit.get('text') or '', hit.get('role') or '')}"
         f"{_code_meta_badge(code_meta)}"
         f"{_render_context(context_rows or [])}"
         f"{nlink}"
@@ -320,9 +352,9 @@ def create_app(db_path: str) -> FastAPI:
             is_hit = hl and t.get("turn_id") == hl
             marker = "► " if is_hit else "  "
             role = html.escape(t.get("role") or "")
-            text = html.escape(t.get("text") or "")
             cls = "row hit" if is_hit else "row"
-            parts.append(f'<div class="{cls}">{marker}{role}: {text}</div>')
+            body_text = _turn_text(t.get("text") or "", t.get("role") or "", open_=bool(is_hit))
+            parts.append(f'<div class="{cls}">{marker}{role}: {body_text}</div>')
         parts.append("</div>")
         body += "".join(parts)
         return _PAGE_HEAD + body + _PAGE_TAIL
