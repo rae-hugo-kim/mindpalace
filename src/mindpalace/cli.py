@@ -115,6 +115,15 @@ def search_cmd(
         "-c",
         help="Show ±N surrounding turns from the same session under each hit.",
     ),
+    since: str | None = typer.Option(
+        None, "--since", help="Only chunks at/after this ISO timestamp (e.g. 2026-05-01)."
+    ),
+    until: str | None = typer.Option(
+        None, "--until", help="Only chunks at/before this ISO timestamp."
+    ),
+    title_like: str | None = typer.Option(
+        None, "--title-like", help="Only sessions whose title contains this substring."
+    ),
 ) -> None:
     """Run a semantic search over stored chunks."""
     results = search_chunks(
@@ -124,6 +133,9 @@ def search_cmd(
         top_k=top_k,
         confidence_threshold=min_confidence,
         where_source=source,
+        where_since=since,
+        where_until=until,
+        where_title_like=title_like,
     )
 
     if not results:

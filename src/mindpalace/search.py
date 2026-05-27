@@ -38,6 +38,9 @@ def search(
     top_k: int = 5,
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
     where_source: str | None = None,
+    where_since: str | None = None,
+    where_until: str | None = None,
+    where_title_like: str | None = None,
 ) -> list[dict]:
     """Return the top-``top_k`` chunks most similar to ``query``.
 
@@ -50,17 +53,25 @@ def search(
     distinguish "actually relevant" from "best of an irrelevant bunch".
     Empty DB or no matches -> empty list (no exception).
 
-    ``where_source`` (when set) restricts results to that source. Because
-    the sqlite-vec MATCH clause is evaluated before the JOIN-side
-    filter, we over-sample the vector match (``top_k * 20``, floor 100)
-    and then SQL-LIMIT down to ``top_k`` so the filter doesn't starve.
+    Meta filters (all optional, AND-combined):
+      ``where_source``      exact source match (e.g. "code" / "chat")
+      ``where_since``       inclusive lower bound on chunk timestamp
+                            (lexicographic ISO-8601 compare)
+      ``where_until``       inclusive upper bound on chunk timestamp
+      ``where_title_like``  case-insensitive substring match on title
+
+    Because the sqlite-vec MATCH clause is evaluated before the
+    JOIN-side filters, whenever any filter is active we over-sample the
+    vector match (``top_k * 20``, floor 100) and SQL-LIMIT back to
+    ``top_k`` so the filters don't starve the result set.
     """
     query_vec = embed_fn(query)
 
-    if where_source is None:
-        match_k = top_k
-    else:
-        match_k = max(top_k * 20, 100)
+    has_filter = any(
+        f is not None
+        for f in (where_source, where_since, where_until, where_title_like)
+    )
+    match_k = max(top_k * 20, 100) if has_filter else top_k
 
     sql = """
         SELECT c.chunk_id, c.session_id, c.title, c.role, c.text,
@@ -74,6 +85,15 @@ def search(
     if where_source is not None:
         sql += " AND c.source = ?"
         params.append(where_source)
+    if where_since is not None:
+        sql += " AND c.timestamp >= ?"
+        params.append(where_since)
+    if where_until is not None:
+        sql += " AND c.timestamp <= ?"
+        params.append(where_until)
+    if where_title_like is not None:
+        sql += " AND c.title LIKE ?"
+        params.append(f"%{where_title_like}%")
     sql += " ORDER BY v.distance LIMIT ?"
     params.append(top_k)
 

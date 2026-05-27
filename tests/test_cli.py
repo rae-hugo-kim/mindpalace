@@ -278,6 +278,28 @@ def test_cli_search_source_filter(tmp_path: Path, warm_model: None) -> None:
             assert "source=code" in line, line
 
 
+def test_cli_search_title_like_filter(tmp_path: Path, warm_model: None) -> None:
+    """T16 (RED, AC5): `--title-like` restricts to sessions whose title matches."""
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    chat_path = tmp_path / "chats.json"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)   # title: "MCP setup walkthrough"
+    _write_chat_json(chat_path)     # title: "Talking about MCP"
+
+    runner.invoke(app, ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)])
+    runner.invoke(app, ["import", str(chat_path), "--source", "chat", "--db", str(db_path)])
+
+    result = runner.invoke(
+        app,
+        ["search", "MCP", "--db", str(db_path), "--top-k", "10", "--title-like", "walkthrough"],
+    )
+    assert result.exit_code == 0, result.output
+    # Only the code session's title matches "walkthrough".
+    assert "walkthrough" in result.output
+    assert "Talking about MCP" not in result.output
+
+
 def test_cli_search_warns_when_all_low_confidence(tmp_path: Path, warm_model: None) -> None:
     """T13 (RED): if every hit is low-confidence, CLI prints a warning line."""
     runner = CliRunner()

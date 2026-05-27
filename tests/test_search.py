@@ -263,6 +263,45 @@ def test_get_chunk_context_unknown_turn_returns_empty(tmp_path):
     assert get_chunk_context(db, session_id="no-such-session", turn_id="t0") == []
 
 
+def test_search_filters_by_time_range(tmp_path):
+    """T16 (RED, AC5): where_since/where_until bound results by chunk timestamp."""
+    db = str(tmp_path / "time-filter.db")
+    init_db(db)
+    store_session(db, _make_dated_session("old", "2026-01-01", "MCP config"), source="code", embed_fn=embed_chunk)
+    store_session(db, _make_dated_session("mid", "2026-05-15", "MCP config"), source="code", embed_fn=embed_chunk)
+    store_session(db, _make_dated_session("new", "2026-09-01", "MCP config"), source="code", embed_fn=embed_chunk)
+
+    # Window May..June → only the "mid" session.
+    windowed = search(db, "MCP config", embed_chunk, top_k=10,
+                      where_since="2026-05-01", where_until="2026-06-01")
+    assert {r["session_id"] for r in windowed} == {"mid"}
+
+    # since only.
+    since_only = search(db, "MCP config", embed_chunk, top_k=10, where_since="2026-05-01")
+    assert {r["session_id"] for r in since_only} == {"mid", "new"}
+
+
+def test_search_filters_by_title_like(tmp_path):
+    """T16 (RED, AC5): where_title_like is a substring (case-insensitive) match."""
+    db = str(tmp_path / "title-filter.db")
+    init_db(db)
+    store_session(
+        db,
+        {"session_id": "kv", "title": "Knowledge Vault design", "extra": {},
+         "turns": [{"turn_id": "t1", "role": "user", "text": "store and search", "timestamp": "2026-05-01T00:00:00Z", "parent_id": None}]},
+        source="code", embed_fn=embed_chunk,
+    )
+    store_session(
+        db,
+        {"session_id": "diet", "title": "레그프레스 운동 루틴", "extra": {},
+         "turns": [{"turn_id": "t1", "role": "user", "text": "store and search", "timestamp": "2026-05-01T00:00:00Z", "parent_id": None}]},
+        source="chat", embed_fn=embed_chunk,
+    )
+
+    res = search(db, "store and search", embed_chunk, top_k=10, where_title_like="vault")
+    assert {r["session_id"] for r in res} == {"kv"}
+
+
 def test_search_respects_top_k(tmp_path):
     """T9: top_k caps the number of results returned."""
     db = str(tmp_path / "topk.db")
