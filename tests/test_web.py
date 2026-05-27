@@ -248,6 +248,16 @@ def test_hit_links_to_session(tmp_path: Path, warm_model: None) -> None:
     assert "/session?session_id=" in resp.text
 
 
+def test_form_number_inputs_have_visible_labels(tmp_path: Path, warm_model: None) -> None:
+    """T28 (RED): the bare number inputs (top_k, context) carry visible text
+    labels so the user knows what 5 and 2 mean without hovering."""
+    resp = TestClient(create_app(_populated_db(tmp_path))).get("/")
+    assert resp.status_code == 200
+    assert "<label" in resp.text
+    assert "결과" in resp.text   # top_k label
+    assert "맥락" in resp.text   # context label
+
+
 def test_search_escapes_html_in_results(tmp_path: Path, warm_model: None) -> None:
     """XSS guard: stored/queried content must be HTML-escaped in the page."""
     db = str(tmp_path / "xss.db")

@@ -35,9 +35,11 @@ _PAGE_HEAD = """<!doctype html>
 <title>mindpalace</title>
 <style>
  body{font-family:system-ui,sans-serif;max-width:820px;margin:2rem auto;padding:0 1rem;line-height:1.5}
- form{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem}
+ form{display:flex;gap:.5rem;flex-wrap:wrap;align-items:end;margin-bottom:1.5rem}
  input[type=text]{flex:1;min-width:14rem;padding:.5rem;font-size:1rem}
  select,input[type=number]{padding:.5rem}
+ label{display:flex;flex-direction:column;font-size:.7rem;color:#666;gap:.15rem}
+ label input[type=number]{width:4.5rem}
  button{padding:.5rem 1rem;font-size:1rem;cursor:pointer}
  .hit{border:1px solid #ddd;border-radius:8px;padding:.75rem 1rem;margin:.75rem 0}
  .hit.low{border-color:#e0b000;background:#fffdf3}
@@ -76,13 +78,13 @@ def _form(
     tl = html.escape(title_like)
     return f"""<form action="/search" method="get">
  <input type="text" name="q" value="{qs}" placeholder="자연어로 검색…" autofocus>
- <select name="source">
+ <label>소스<select name="source">
   <option value="">all sources</option>
   <option value="code"{code_sel}>code</option>
   <option value="chat"{chat_sel}>chat</option>
- </select>
- <input type="number" name="top_k" value="{int(top_k)}" min="1" max="50" title="top_k">
- <input type="number" name="context" value="{int(context)}" min="0" max="10" title="context ±N turns">
+ </select></label>
+ <label>결과 수<input type="number" name="top_k" value="{int(top_k)}" min="1" max="50" title="검색 결과 개수 (top_k)"></label>
+ <label>맥락 ±<input type="number" name="context" value="{int(context)}" min="0" max="10" title="hit 앞뒤로 함께 보여줄 turn 수"></label>
  <input type="text" name="file_like" value="{fl}" placeholder="file path…" title="code file path substring">
  <input type="text" name="since" value="{sn}" placeholder="since (YYYY-MM-DD)" title="since">
  <input type="text" name="until" value="{un}" placeholder="until (YYYY-MM-DD)" title="until">
