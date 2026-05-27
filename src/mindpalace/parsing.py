@@ -6,6 +6,10 @@ from typing import Any
 
 import ijson
 
+from mindpalace.obs import get_logger
+
+_log = get_logger("mindpalace.parsing")
+
 _TURN_TYPES = ("user", "assistant")
 _SENDER_ROLE_MAP = {"human": "user", "user": "user", "assistant": "assistant"}
 _SUPPORTED_CHAT_SCHEMA_VERSIONS = {1}
@@ -133,6 +137,11 @@ def _conv_to_session(conv: dict) -> dict:
     turns: list[dict] = []
     for msg in conv.get("chat_messages", []):
         sender = msg.get("sender", "")
+        if sender not in _SENDER_ROLE_MAP:
+            _log.warning(
+                "unknown chat sender role %r in message %s (conversation %s); kept as-is",
+                sender, msg.get("uuid", ""), conv.get("uuid", ""),
+            )
         turns.append(
             {
                 "turn_id": msg.get("uuid", ""),

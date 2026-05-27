@@ -2,7 +2,9 @@
 import json
 import sqlite3
 
-from mindpalace.storage import count_chunks, init_db, store_session
+import pytest
+
+from mindpalace.storage import _connect, count_chunks, init_db, store_session
 
 
 def _fake_embed(text: str) -> list[float]:
@@ -32,6 +34,28 @@ def _sample_session_with_secret() -> dict:
         ],
         "extra": {"cwd": "/proj", "git_branch": "main"},
     }
+
+
+def test_connect_enforces_foreign_keys(tmp_path):
+    """T25 (RED): connections enable foreign-key enforcement, so a chunk
+    referencing a non-existent session is rejected (referential integrity)."""
+    db = str(tmp_path / "fk.db")
+    init_db(db)
+
+    conn = _connect(db)
+    try:
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO chunks "
+                "(chunk_id, session_id, turn_id, source, title, role, text, "
+                "timestamp, parent_id, ingested_at) "
+                "VALUES ('orphan:t1','no-such-session','t1','code',NULL,'user','x','','',"
+                "'2026-05-27T00:00:00Z')",
+            )
+            conn.commit()
+    finally:
+        conn.close()
 
 
 def test_init_db_idempotent(tmp_path):

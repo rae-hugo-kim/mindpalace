@@ -75,6 +75,7 @@ def _connect(db_path: str) -> sqlite3.Connection:
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 

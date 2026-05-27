@@ -266,6 +266,33 @@ def test_stream_chat_sessions_yields_lazily(tmp_path):
     assert s0["extra"]["summary"] == "s"
 
 
+def test_stream_chat_sessions_warns_on_unknown_sender(tmp_path, caplog):
+    """T25 (RED): an unrecognized chat sender (boundary validation of the
+    user-curated JSON) is logged as a warning and kept as-is, not silently
+    swallowed."""
+    import logging
+
+    p = tmp_path / "weird.json"
+    data = {
+        "schema_version": 1,
+        "conversations": [
+            {"uuid": "c1", "name": "n", "summary": "", "created_at": "t", "updated_at": "t",
+             "chat_messages": [
+                 {"uuid": "m1", "sender": "tool", "text": "hi", "created_at": "t",
+                  "parent_message_uuid": None},
+             ]},
+        ],
+    }
+    p.write_text(json.dumps(data))
+
+    with caplog.at_level(logging.WARNING, logger="mindpalace.parsing"):
+        sessions = list(stream_chat_sessions(str(p)))
+
+    assert sessions[0]["turns"][0]["role"] == "tool"  # kept as-is
+    warnings = [r for r in caplog.records if r.name == "mindpalace.parsing"]
+    assert any("tool" in r.getMessage() for r in warnings)
+
+
 def test_stream_chat_sessions_rejects_unknown_schema_version(tmp_path):
     """T24 (RED): streaming path enforces the same schema_version contract."""
     p = tmp_path / "future.json"
