@@ -152,6 +152,50 @@ def test_search_shows_code_meta_badge(tmp_path: Path, warm_model: None) -> None:
     assert "errors=1" in resp.text or "1 error" in resp.text
 
 
+def test_search_context_shows_neighbor_turns(tmp_path: Path, warm_model: None) -> None:
+    """T23 (RED): context=N renders ±N surrounding turns under the hit with a
+    ► marker on the hit row (web equivalent of CLI --context)."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/search", params={"q": "How do I set up MCP servers?",
+                                          "top_k": 1, "context": 1})
+    assert resp.status_code == 200
+    assert "►" in resp.text
+    # The neighbor turn t2 text should appear via context expansion.
+    assert "claude mcp add" in resp.text
+
+
+def test_search_form_has_context_input(tmp_path: Path, warm_model: None) -> None:
+    """T23 (RED): the form exposes a context (±N) control."""
+    resp = TestClient(create_app(_populated_db(tmp_path))).get("/")
+    assert 'name="context"' in resp.text
+
+
+def test_neighbors_route_lists_opposite_source(tmp_path: Path, warm_model: None) -> None:
+    """T23 (RED): GET /neighbors?session_id=code-1 lists the chat session
+    imported the same day (AC6 weak learn↔work link, surfaced in the web)."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/neighbors", params={"session_id": "code-1", "days": 3})
+    assert resp.status_code == 200
+    # code-1 (code) ↔ chat-1 (chat) on 2026-05-26 are within ±3 days.
+    assert "Talking about MCP" in resp.text
+
+
+def test_neighbors_route_unknown_session_friendly(tmp_path: Path, warm_model: None) -> None:
+    """T23 (RED): unknown session id → friendly empty message, still 200."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/neighbors", params={"session_id": "no-such"})
+    assert resp.status_code == 200
+    assert "neighbor" in resp.text.lower()
+
+
+def test_hit_links_to_neighbors(tmp_path: Path, warm_model: None) -> None:
+    """T23 (RED): each hit offers a link to its session's neighbors."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/search", params={"q": "How do I set up MCP servers?", "top_k": 1})
+    assert resp.status_code == 200
+    assert "/neighbors?session_id=" in resp.text
+
+
 def test_search_escapes_html_in_results(tmp_path: Path, warm_model: None) -> None:
     """XSS guard: stored/queried content must be HTML-escaped in the page."""
     db = str(tmp_path / "xss.db")

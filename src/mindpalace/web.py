@@ -20,6 +20,8 @@ from fastapi.responses import HTMLResponse
 from mindpalace.embedding import embed_chunk
 from mindpalace.search import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    find_neighbors,
+    get_chunk_context,
     get_code_meta,
     search as search_chunks,
 )
@@ -41,6 +43,10 @@ _PAGE_HEAD = """<!doctype html>
  .warn{color:#b35900;font-weight:600}
  .empty{color:#666}
  .latency{color:#888;font-size:.8rem}
+ .ctx{border-left:2px solid #eee;margin:.5rem 0 0 .5rem;padding-left:.6rem;font-size:.9rem}
+ .ctx .row{color:#777;margin:.15rem 0}
+ .ctx .row.hit{color:#111;font-weight:600;background:none;border:none;padding:0}
+ .nlink{font-size:.8rem;margin-top:.35rem}
 </style></head><body>
 <h1>mindpalace</h1>
 """
@@ -56,6 +62,7 @@ def _form(
     since: str = "",
     until: str = "",
     title_like: str = "",
+    context: int = 0,
 ) -> str:
     qs = html.escape(q)
     code_sel = " selected" if source == "code" else ""
@@ -72,6 +79,7 @@ def _form(
   <option value="chat"{chat_sel}>chat</option>
  </select>
  <input type="number" name="top_k" value="{int(top_k)}" min="1" max="50" title="top_k">
+ <input type="number" name="context" value="{int(context)}" min="0" max="10" title="context ±N turns">
  <input type="text" name="file_like" value="{fl}" placeholder="file path…" title="code file path substring">
  <input type="text" name="since" value="{sn}" placeholder="since (YYYY-MM-DD)" title="since">
  <input type="text" name="until" value="{un}" placeholder="until (YYYY-MM-DD)" title="until">
@@ -98,20 +106,48 @@ def _code_meta_badge(meta: dict | None) -> str:
     )
 
 
-def _render_hit(i: int, hit: dict, code_meta: dict | None = None) -> str:
+def _render_context(rows: list[dict]) -> str:
+    """Render ±N surrounding turns; the hit row is marked with ►."""
+    if not rows:
+        return ""
+    parts = ['<div class="ctx">']
+    for r in rows:
+        is_hit = r.get("is_hit")
+        marker = "► " if is_hit else "  "
+        role = html.escape(r.get("role") or "")
+        text = html.escape(r.get("text") or "")
+        cls = "row hit" if is_hit else "row"
+        parts.append(f'<div class="{cls}">{marker}{role}: {text}</div>')
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _render_hit(
+    i: int,
+    hit: dict,
+    code_meta: dict | None = None,
+    context_rows: list[dict] | None = None,
+) -> str:
     title = html.escape(str(hit.get("title") or ""))
     text = html.escape(hit.get("text") or "")
     role = html.escape(hit.get("role") or "")
     source = html.escape(hit.get("source") or "")
+    session_id = hit.get("session_id") or ""
     low = hit.get("low_confidence")
     cls = "hit low" if low else "hit"
     warn = ' <span class="warn">⚠ low-confidence</span>' if low else ""
+    nlink = (
+        f'<div class="nlink"><a href="/neighbors?session_id={html.escape(session_id)}">'
+        "↔ neighbors (학습↔작업)</a></div>"
+    )
     return (
         f'<div class="{cls}">'
         f'<div class="meta">[{i}] distance={hit["distance"]:.4f} · '
         f"source={source} · role={role} · title={title}{warn}</div>"
         f"<div>{text}</div>"
         f"{_code_meta_badge(code_meta)}"
+        f"{_render_context(context_rows or [])}"
+        f"{nlink}"
         f"</div>"
     )
 
@@ -133,10 +169,12 @@ def create_app(db_path: str) -> FastAPI:
         since: str = Query("", description="ISO lower bound on timestamp"),
         until: str = Query("", description="ISO upper bound on timestamp"),
         title_like: str = Query("", description="session title substring"),
+        context: int = Query(0, ge=0, le=10, description="±N surrounding turns"),
     ) -> str:
         body = _form(
             q=q, source=source, top_k=top_k,
             file_like=file_like, since=since, until=until, title_like=title_like,
+            context=context,
         )
 
         if not q.strip():
@@ -184,14 +222,48 @@ def create_app(db_path: str) -> FastAPI:
             parts = []
             for i, h in enumerate(results, start=1):
                 cm = None
+                sid = h["session_id"]
                 if h.get("source") == "code":
-                    sid = h["session_id"]
                     if sid not in meta_cache:
                         meta_cache[sid] = get_code_meta(db_path, sid)
                     cm = meta_cache[sid]
-                parts.append(_render_hit(i, h, code_meta=cm))
+                ctx_rows = None
+                if context > 0:
+                    turn_id = h["chunk_id"][len(sid) + 1:]
+                    ctx_rows = get_chunk_context(db_path, sid, turn_id, window=context)
+                parts.append(_render_hit(i, h, code_meta=cm, context_rows=ctx_rows))
             body += "".join(parts)
 
+        return _PAGE_HEAD + body + _PAGE_TAIL
+
+    @app.get("/neighbors", response_class=HTMLResponse)
+    def neighbors_page(
+        session_id: str = Query(..., description="session whose neighbors to list"),
+        days: float = Query(3.0, gt=0, le=365),
+    ) -> str:
+        rows = find_neighbors(db_path, session_id=session_id, window_days=days)
+        sid = html.escape(session_id)
+        body = f"<h2>neighbors of {sid}</h2>"
+        body += f'<p><a href="/">← back to search</a> · window ±{days:g} days</p>'
+        if not rows:
+            body += (
+                f'<p class="empty">±{days:g}일 내 반대 소스(학습↔작업) neighbor 없음 '
+                "(또는 session_id 미존재).</p>"
+            )
+            return _PAGE_HEAD + body + _PAGE_TAIL
+        for n in rows:
+            title = html.escape(str(n.get("title") or ""))
+            nsid = html.escape(n.get("session_id") or "")
+            nsource = html.escape(n.get("source") or "")
+            delta = n.get("time_delta_days", 0.0)
+            anchor = html.escape(str(n.get("anchor_timestamp") or ""))
+            body += (
+                '<div class="hit">'
+                f'<div class="meta">{delta:+.2f}d · source={nsource} · '
+                f"session={nsid} · anchor={anchor}</div>"
+                f"<div>{title}</div>"
+                "</div>"
+            )
         return _PAGE_HEAD + body + _PAGE_TAIL
 
     return app
