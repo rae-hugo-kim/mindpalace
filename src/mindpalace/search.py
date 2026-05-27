@@ -8,12 +8,17 @@ the vector distance and the original chunk metadata.
 from __future__ import annotations
 
 import sqlite3
+import time
 from datetime import datetime, timedelta
 from typing import Callable
 
 import sqlite_vec
 
+from mindpalace.obs import get_logger
+
 EmbedFn = Callable[[str], list[float]]
+
+_log = get_logger("mindpalace.search")
 
 # Default L2 cut-off for paraphrase-multilingual-MiniLM-L12-v2 distances.
 # Empirical: dry-run #1 showed good matches at ~3.2–3.5 and clearly-off
@@ -70,6 +75,7 @@ def search(
     vector match (``top_k * 20``, floor 100) and SQL-LIMIT back to
     ``top_k`` so the filters don't starve the result set.
     """
+    t0 = time.perf_counter()
     query_vec = embed_fn(query)
 
     has_filter = any(
@@ -120,7 +126,7 @@ def search(
     finally:
         conn.close()
 
-    return [
+    results = [
         {
             "chunk_id": r[0],
             "session_id": r[1],
@@ -134,6 +140,9 @@ def search(
         }
         for r in rows
     ]
+    latency_ms = (time.perf_counter() - t0) * 1000.0
+    _log.info("search query=%r latency_ms=%.2f hits=%d", query, latency_ms, len(results))
+    return results
 
 
 def get_chunk_context(

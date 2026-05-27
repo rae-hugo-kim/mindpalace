@@ -381,6 +381,29 @@ def test_cli_search_file_like_filter(tmp_path: Path, warm_model: None) -> None:
     assert "MCP setup walkthrough" not in result.output    # _write_code_jsonl title
 
 
+def test_cli_import_writes_log_file(tmp_path: Path, warm_model: None) -> None:
+    """T21 (RED, AC15): import writes an operational log file (default:
+    mindpalace.log next to the DB) recording the import result with
+    masked + embed_failures counters."""
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)
+
+    result = runner.invoke(
+        app,
+        ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    log_path = tmp_path / "mindpalace.log"
+    assert log_path.exists(), "expected a log file next to the DB"
+    contents = log_path.read_text()
+    assert "import" in contents.lower()
+    assert "masked=" in contents
+    assert "embed_failures=" in contents
+
+
 def test_cli_search_warns_when_all_low_confidence(tmp_path: Path, warm_model: None) -> None:
     """T13 (RED): if every hit is low-confidence, CLI prints a warning line."""
     runner = CliRunner()

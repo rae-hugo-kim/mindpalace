@@ -21,8 +21,11 @@ import sqlite_vec
 
 from mindpalace.embedding import EMBEDDING_DIM
 from mindpalace.masking import mask_secrets
+from mindpalace.obs import get_logger
 
 EmbedFn = Callable[[str], list[float]]
+
+_log = get_logger("mindpalace.storage")
 
 
 _SCHEMA_SQL = [
@@ -110,7 +113,11 @@ def store_session(
     Idempotent: re-importing the same session is a no-op thanks to
     INSERT OR IGNORE on the primary keys.
 
-    Returns counts: {sessions_inserted, chunks_inserted, dedup_skipped}.
+    Returns counts: {sessions_inserted, chunks_inserted, dedup_skipped,
+    masked, embed_failures}. ``masked`` is the number of chunks whose
+    text was altered by secret masking; ``embed_failures`` is the number
+    of chunks dropped because ``embed_fn`` raised (AC15 operational
+    signals, also written to the ``mindpalace.storage`` log).
     """
     now = datetime.now(timezone.utc).isoformat()
     session_id = session.get("session_id", "")
@@ -150,12 +157,16 @@ def store_session(
 
         chunks_inserted = 0
         dedup_skipped = 0
+        masked = 0
+        embed_failures = 0
         for turn in session.get("turns", []):
             raw_text = turn.get("text", "")
             if not raw_text.strip():
                 continue
             chunk_id = f"{session_id}:{turn.get('turn_id', '')}"
             masked_text = mask_secrets(raw_text)
+            if masked_text != raw_text:
+                masked += 1
 
             ch_cur = conn.execute(
                 "INSERT OR IGNORE INTO chunks "
@@ -176,7 +187,19 @@ def store_session(
                 ),
             )
             if ch_cur.rowcount > 0:
-                vector = embed_fn(masked_text)
+                try:
+                    vector = embed_fn(masked_text)
+                except Exception:
+                    # Drop the just-claimed chunk row so chunks/chunk_vec
+                    # stay in sync; the absent chunk_id lets a later
+                    # reimport retry the embedding.
+                    conn.execute("DELETE FROM chunks WHERE rowid = ?", (ch_cur.lastrowid,))
+                    embed_failures += 1
+                    _log.warning(
+                        "embedding failed for chunk %s — skipped (will retry on reimport)",
+                        chunk_id,
+                    )
+                    continue
                 conn.execute(
                     "INSERT INTO chunk_vec(rowid, embedding) VALUES (?, ?)",
                     (ch_cur.lastrowid, sqlite_vec.serialize_float32(vector)),
@@ -186,10 +209,18 @@ def store_session(
                 dedup_skipped += 1
 
         conn.commit()
+        _log.info(
+            "import session=%s source=%s sessions_inserted=%d chunks_inserted=%d "
+            "dedup_skipped=%d masked=%d embed_failures=%d",
+            session_id, source, sessions_inserted, chunks_inserted,
+            dedup_skipped, masked, embed_failures,
+        )
         return {
             "sessions_inserted": sessions_inserted,
             "chunks_inserted": chunks_inserted,
             "dedup_skipped": dedup_skipped,
+            "masked": masked,
+            "embed_failures": embed_failures,
         }
     finally:
         conn.close()

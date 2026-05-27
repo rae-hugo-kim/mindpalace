@@ -164,6 +164,57 @@ def test_store_session_without_code_meta_writes_no_row(tmp_path):
     assert n == 0
 
 
+def test_store_session_counts_masked_chunks(tmp_path):
+    """T21 (RED, AC15): result reports how many chunks had a secret masked.
+
+    The sample session has one secret-bearing turn and one clean turn,
+    so exactly one chunk should be counted as masked.
+    """
+    db = str(tmp_path / "test.db")
+    init_db(db)
+
+    result = store_session(db, _sample_session_with_secret(), source="code", embed_fn=_fake_embed)
+
+    assert result["masked"] == 1
+
+
+def test_store_session_counts_embed_failures_and_skips_chunk(tmp_path):
+    """T21 (RED, AC15): an embedding failure is counted, logged, and the
+    offending chunk is skipped (not stored) so the rest still import.
+
+    Skipping rather than storing a vector-less chunk keeps chunks/chunk_vec
+    in sync; the chunk_id is absent so a later reimport retries it.
+    """
+    db = str(tmp_path / "test.db")
+    init_db(db)
+
+    def _flaky_embed(text: str) -> list[float]:
+        if "boom" in text:
+            raise RuntimeError("embedding backend exploded")
+        return _fake_embed(text)
+
+    session = {
+        "session_id": "ef1",
+        "title": "T",
+        "turns": [
+            {"turn_id": "t1", "role": "user", "text": "fine one", "timestamp": "", "parent_id": None},
+            {"turn_id": "t2", "role": "assistant", "text": "boom goes the embed", "timestamp": "", "parent_id": None},
+            {"turn_id": "t3", "role": "user", "text": "also fine", "timestamp": "", "parent_id": None},
+        ],
+        "extra": {},
+    }
+
+    result = store_session(db, session, source="code", embed_fn=_flaky_embed)
+
+    assert result["embed_failures"] == 1
+    assert result["chunks_inserted"] == 2  # the two clean turns
+    assert count_chunks(db) == 2
+    conn = sqlite3.connect(db)
+    missing = conn.execute("SELECT COUNT(*) FROM chunks WHERE chunk_id='ef1:t2'").fetchone()[0]
+    conn.close()
+    assert missing == 0
+
+
 def test_store_session_records_source_and_metadata(tmp_path):
     """T8: source + session-level metadata (title, extra) are retrievable."""
     db = str(tmp_path / "test.db")

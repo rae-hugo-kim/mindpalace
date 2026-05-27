@@ -20,6 +20,7 @@ from pathlib import Path
 import typer
 
 from mindpalace.embedding import embed_chunk
+from mindpalace.obs import configure_logging, get_logger
 from mindpalace.parsing import parse_chat_json, parse_claude_code_jsonl
 from mindpalace.search import (
     DEFAULT_CONFIDENCE_THRESHOLD,
@@ -33,6 +34,12 @@ from mindpalace.storage import init_db, store_session
 app = typer.Typer(add_completion=False, help="Mindpalace personal knowledge vault.")
 
 _TEXT_PREVIEW_CHARS = 160
+_log = get_logger("mindpalace.cli")
+
+
+def _default_log_file(db: Path) -> str:
+    """Operational log lives next to the DB (mindpalace.log) by default."""
+    return str((db.parent if str(db.parent) else Path(".")) / "mindpalace.log")
 
 
 @app.command("import")
@@ -45,8 +52,13 @@ def import_cmd(
         "--accept-unencrypted",
         help="Proceed even if the DB directory is not on an encrypted volume.",
     ),
+    log_file: str | None = typer.Option(
+        None, "--log-file", help="Operational log path (default: mindpalace.log next to the DB)."
+    ),
 ) -> None:
     """Parse and store a session file."""
+    configure_logging(log_file or _default_log_file(db))
+
     if source not in {"code", "chat"}:
         typer.echo(f"error: --source must be 'code' or 'chat', got {source!r}", err=True)
         raise typer.Exit(code=2)
@@ -80,17 +92,29 @@ def import_cmd(
     total_sessions = 0
     total_chunks = 0
     total_dedup = 0
+    total_masked = 0
+    total_embed_failures = 0
     for sess in sessions:
         counts = store_session(str(db), sess, source, embed_chunk)
         total_sessions += counts["sessions_inserted"]
         total_chunks += counts["chunks_inserted"]
         total_dedup += counts["dedup_skipped"]
+        total_masked += counts["masked"]
+        total_embed_failures += counts["embed_failures"]
 
+    _log.info(
+        "import complete source=%s file=%s sessions_inserted=%d chunks_inserted=%d "
+        "dedup_skipped=%d masked=%d embed_failures=%d",
+        source, path, total_sessions, total_chunks, total_dedup,
+        total_masked, total_embed_failures,
+    )
     typer.echo(
         f"imported source={source} file={path} "
         f"sessions_inserted={total_sessions} "
         f"chunks_inserted={total_chunks} "
-        f"dedup_skipped={total_dedup}"
+        f"dedup_skipped={total_dedup} "
+        f"masked={total_masked} "
+        f"embed_failures={total_embed_failures}"
     )
 
     if source == "code":
@@ -145,8 +169,12 @@ def search_cmd(
         "--file-like",
         help="Only code sessions whose extracted file paths contain this substring.",
     ),
+    log_file: str | None = typer.Option(
+        None, "--log-file", help="Operational log path (default: mindpalace.log next to the DB)."
+    ),
 ) -> None:
     """Run a semantic search over stored chunks."""
+    configure_logging(log_file or _default_log_file(db))
     results = search_chunks(
         str(db),
         query,

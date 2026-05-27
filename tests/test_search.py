@@ -337,6 +337,25 @@ def test_search_filters_by_file_like(tmp_path):
     assert {r["session_id"] for r in res} == {"touches-search"}
 
 
+def test_search_logs_latency(tmp_path, caplog):
+    """T21 (RED, AC15): each search emits a latency log record on the
+    mindpalace.search logger with a latency_ms field and the hit count."""
+    import logging
+
+    db = str(tmp_path / "latency.db")
+    init_db(db)
+    _store_three_chunks(db)
+
+    with caplog.at_level(logging.INFO, logger="mindpalace.search"):
+        search(db, "MCP setup", embed_chunk, top_k=2)
+
+    records = [r for r in caplog.records if r.name == "mindpalace.search"]
+    assert records, "expected a mindpalace.search log record"
+    msg = records[-1].getMessage()
+    assert "latency_ms=" in msg
+    assert "hits=2" in msg
+
+
 def test_search_respects_top_k(tmp_path):
     """T9: top_k caps the number of results returned."""
     db = str(tmp_path / "topk.db")
