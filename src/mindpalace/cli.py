@@ -27,6 +27,7 @@ from mindpalace.search import (
     get_chunk_context,
     search as search_chunks,
 )
+from mindpalace.security import detect_encryption
 from mindpalace.storage import init_db, store_session
 
 app = typer.Typer(add_completion=False, help="Mindpalace personal knowledge vault.")
@@ -39,11 +40,35 @@ def import_cmd(
     path: Path = typer.Argument(..., exists=True, readable=True, help="Source file path."),
     source: str = typer.Option(..., "--source", "-s", help="One of: code, chat."),
     db: Path = typer.Option(..., "--db", help="SQLite DB path (created if missing)."),
+    accept_unencrypted: bool = typer.Option(
+        False,
+        "--accept-unencrypted",
+        help="Proceed even if the DB directory is not on an encrypted volume.",
+    ),
 ) -> None:
     """Parse and store a session file."""
     if source not in {"code", "chat"}:
         typer.echo(f"error: --source must be 'code' or 'chat', got {source!r}", err=True)
         raise typer.Exit(code=2)
+
+    db_dir = str(db.parent) if str(db.parent) else "."
+    encryption = detect_encryption(db_dir)
+    if encryption is not True:
+        state = "could not be verified" if encryption is None else "is NOT encrypted"
+        typer.echo(
+            f"warning: the DB directory ({db_dir}) {state}.\n"
+            "  The vault stores your full Claude history; it should live on an\n"
+            "  OS-encrypted volume (LUKS / FileVault / BitLocker).",
+            err=True,
+        )
+        if not accept_unencrypted:
+            typer.echo(
+                "error: refusing to write to an unencrypted/unknown volume.\n"
+                "  Re-run with --accept-unencrypted to override.",
+                err=True,
+            )
+            raise typer.Exit(code=3)
+        typer.echo("  --accept-unencrypted given; proceeding anyway.", err=True)
 
     init_db(str(db))
 

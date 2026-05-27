@@ -23,6 +23,15 @@ def warm_model() -> None:
     embed_chunk("warmup")
 
 
+@pytest.fixture(autouse=True)
+def _assume_encrypted(monkeypatch) -> None:
+    """Existing import flows run on unencrypted CI/tmp volumes; assume the
+    DB dir is encrypted so the AC10 guard does not block unrelated tests.
+    Guard-specific tests re-patch ``detect_encryption`` to False/None.
+    """
+    monkeypatch.setattr("mindpalace.cli.detect_encryption", lambda _path: True)
+
+
 def _write_code_jsonl(p: Path) -> None:
     lines = [
         {"type": "ai-title", "aiTitle": "MCP setup walkthrough"},
@@ -109,6 +118,60 @@ def test_cli_import_code_then_search(tmp_path: Path, warm_model: None) -> None:
     # Top hit should mention MCP, not recursion.
     assert "MCP" in result.output or "mcp" in result.output
     assert "recursion" not in result.output.lower() or result.output.lower().count("recursion") <= 1
+
+
+def test_cli_import_blocks_on_unencrypted_volume(tmp_path: Path, warm_model: None, monkeypatch) -> None:
+    """T17 (RED, AC10): import is blocked (non-zero exit) when the DB dir is
+    not on an encrypted volume and no override flag is given."""
+    monkeypatch.setattr("mindpalace.cli.detect_encryption", lambda _path: False)
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)
+
+    result = runner.invoke(
+        app,
+        ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)],
+    )
+    assert result.exit_code != 0
+    assert "encrypt" in result.output.lower()
+    assert "--accept-unencrypted" in result.output
+    # Nothing should have been written.
+    assert not db_path.exists()
+
+
+def test_cli_import_unencrypted_with_override_proceeds(tmp_path: Path, warm_model: None, monkeypatch) -> None:
+    """T17 (RED, AC10): --accept-unencrypted lets import proceed (with a warning)."""
+    monkeypatch.setattr("mindpalace.cli.detect_encryption", lambda _path: False)
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)
+
+    result = runner.invoke(
+        app,
+        ["import", str(jsonl_path), "--source", "code", "--db", str(db_path),
+         "--accept-unencrypted"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "chunks_inserted=3" in result.output
+    assert db_path.exists()
+
+
+def test_cli_import_unknown_encryption_blocks(tmp_path: Path, warm_model: None, monkeypatch) -> None:
+    """T17 (RED, AC10): undetectable encryption (None) is treated like unencrypted."""
+    monkeypatch.setattr("mindpalace.cli.detect_encryption", lambda _path: None)
+    runner = CliRunner()
+    jsonl_path = tmp_path / "session-abc.jsonl"
+    db_path = tmp_path / "mp.db"
+    _write_code_jsonl(jsonl_path)
+
+    result = runner.invoke(
+        app,
+        ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)],
+    )
+    assert result.exit_code != 0
+    assert "encrypt" in result.output.lower()
 
 
 def test_cli_import_chat(tmp_path: Path, warm_model: None) -> None:
