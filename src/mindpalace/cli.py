@@ -21,7 +21,7 @@ import typer
 
 from mindpalace.embedding import embed_chunk
 from mindpalace.obs import configure_logging, get_logger
-from mindpalace.parsing import parse_chat_json, parse_claude_code_jsonl
+from mindpalace.parsing import parse_claude_code_jsonl, stream_chat_sessions
 from mindpalace.search import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     find_neighbors,
@@ -87,7 +87,8 @@ def import_cmd(
     if source == "code":
         sessions = [parse_claude_code_jsonl(str(path))]
     else:
-        sessions = parse_chat_json(str(path))
+        # streaming generator → one conversation in memory at a time
+        sessions = stream_chat_sessions(str(path))
 
     total_sessions = 0
     total_chunks = 0

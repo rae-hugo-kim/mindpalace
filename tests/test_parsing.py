@@ -1,9 +1,14 @@
 """Tests for mindpalace.parsing."""
 import json
+from collections.abc import Iterator
 
 import pytest
 
-from mindpalace.parsing import parse_chat_json, parse_claude_code_jsonl
+from mindpalace.parsing import (
+    parse_chat_json,
+    parse_claude_code_jsonl,
+    stream_chat_sessions,
+)
 
 
 def test_parse_claude_code_jsonl_basic(tmp_path):
@@ -222,6 +227,51 @@ def test_parse_chat_json_multiple_conversations(tmp_path):
     sessions = parse_chat_json(str(p))
     assert [s["session_id"] for s in sessions] == ["conv-0", "conv-1", "conv-2"]
     assert all(len(s["turns"]) == 1 for s in sessions)
+
+
+def test_stream_chat_sessions_yields_lazily(tmp_path):
+    """T24 (RED): stream_chat_sessions returns an iterator (not a materialized
+    list) yielding one session dict per conversation, equivalent to
+    parse_chat_json. Streaming keeps peak memory to one conversation for the
+    91MB real corpus (json.load would spike to ~600MB-1GB)."""
+    p = tmp_path / "multi.json"
+    data = {
+        "schema_version": 1,
+        "conversations": [
+            {
+                "uuid": f"conv-{i}",
+                "name": f"Session {i}",
+                "summary": "s",
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-01T00:00:00Z",
+                "chat_messages": [
+                    {"uuid": f"m-{i}", "sender": "human", "text": f"msg {i}",
+                     "created_at": "2026-05-01T00:00:00Z", "parent_message_uuid": None},
+                ],
+            }
+            for i in range(3)
+        ],
+    }
+    p.write_text(json.dumps(data))
+
+    stream = stream_chat_sessions(str(p))
+    assert isinstance(stream, Iterator)
+
+    sessions = list(stream)
+    assert [s["session_id"] for s in sessions] == ["conv-0", "conv-1", "conv-2"]
+    s0 = sessions[0]
+    assert s0["title"] == "Session 0"
+    assert s0["turns"][0]["role"] == "user"  # 'human' normalized
+    assert s0["turns"][0]["text"] == "msg 0"
+    assert s0["extra"]["summary"] == "s"
+
+
+def test_stream_chat_sessions_rejects_unknown_schema_version(tmp_path):
+    """T24 (RED): streaming path enforces the same schema_version contract."""
+    p = tmp_path / "future.json"
+    p.write_text(json.dumps({"schema_version": 999, "conversations": []}))
+    with pytest.raises(ValueError, match="schema_version"):
+        list(stream_chat_sessions(str(p)))
 
 
 def test_parse_chat_json_rejects_unknown_schema_version(tmp_path):

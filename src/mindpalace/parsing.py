@@ -1,7 +1,10 @@
 """Parsers for Claude session formats (Code JSONL, Chat JSON)."""
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+
+import ijson
 
 _TURN_TYPES = ("user", "assistant")
 _SENDER_ROLE_MAP = {"human": "user", "user": "user", "assistant": "assistant"}
@@ -125,52 +128,76 @@ def parse_claude_code_jsonl(path: str) -> dict:
     }
 
 
-def parse_chat_json(path: str) -> list[dict]:
-    """Parse a user-curated Claude chat export JSON.
+def _conv_to_session(conv: dict) -> dict:
+    """Transform one curated-export conversation into a session dict."""
+    turns: list[dict] = []
+    for msg in conv.get("chat_messages", []):
+        sender = msg.get("sender", "")
+        turns.append(
+            {
+                "turn_id": msg.get("uuid", ""),
+                "role": _SENDER_ROLE_MAP.get(sender, sender),
+                "text": msg.get("text", ""),
+                "timestamp": msg.get("created_at", ""),
+                "parent_id": msg.get("parent_message_uuid"),
+            }
+        )
+    return {
+        "session_id": conv.get("uuid", ""),
+        "title": conv.get("name"),
+        "turns": turns,
+        "extra": {
+            "summary": conv.get("summary", ""),
+            "created_at": conv.get("created_at", ""),
+            "updated_at": conv.get("updated_at", ""),
+        },
+    }
+
+
+def _read_chat_schema_version(path: str) -> Any:
+    """Stream just the top-level ``schema_version`` scalar (no full load)."""
+    with Path(path).open("rb") as f:
+        try:
+            return next(ijson.items(f, "schema_version"))
+        except StopIteration:
+            return None
+
+
+def stream_chat_sessions(path: str) -> Iterator[dict]:
+    """Yield one session dict per conversation, streaming with ijson.
 
     Input contract: docs/architecture/chat-import-schema.md (schema_version 1).
 
-    Returns a list of session dicts (one per conversation). Each session:
+    Unlike a ``json.load`` of the whole file (which spikes to ~600MB-1GB
+    on the real 91MB corpus), this materializes only one conversation at
+    a time, so peak memory stays bounded for end-to-end streaming import.
+
+    Each yielded session:
       session_id: str  (conversation.uuid)
       title: str | None  (conversation.name)
-      turns: list[dict]  (one per chat_messages entry)
-        each turn: {turn_id, role, text, timestamp, parent_id}
+      turns: list[dict]  (one per chat_messages entry:
+        {turn_id, role, text, timestamp, parent_id})
       extra: dict  (summary, created_at, updated_at from conversation)
-    """
-    with Path(path).open() as f:
-        data = json.load(f)
 
-    sv = data.get("schema_version")
+    Raises ValueError if schema_version is unsupported (checked before
+    any conversation is yielded).
+    """
+    sv = _read_chat_schema_version(path)
     if sv not in _SUPPORTED_CHAT_SCHEMA_VERSIONS:
         raise ValueError(
             f"unsupported chat schema_version: {sv!r} "
             f"(expected one of {sorted(_SUPPORTED_CHAT_SCHEMA_VERSIONS)})"
         )
 
-    sessions: list[dict] = []
-    for conv in data.get("conversations", []):
-        turns: list[dict] = []
-        for msg in conv.get("chat_messages", []):
-            sender = msg.get("sender", "")
-            turns.append(
-                {
-                    "turn_id": msg.get("uuid", ""),
-                    "role": _SENDER_ROLE_MAP.get(sender, sender),
-                    "text": msg.get("text", ""),
-                    "timestamp": msg.get("created_at", ""),
-                    "parent_id": msg.get("parent_message_uuid"),
-                }
-            )
-        sessions.append(
-            {
-                "session_id": conv.get("uuid", ""),
-                "title": conv.get("name"),
-                "turns": turns,
-                "extra": {
-                    "summary": conv.get("summary", ""),
-                    "created_at": conv.get("created_at", ""),
-                    "updated_at": conv.get("updated_at", ""),
-                },
-            }
-        )
-    return sessions
+    with Path(path).open("rb") as f:
+        for conv in ijson.items(f, "conversations.item"):
+            yield _conv_to_session(conv)
+
+
+def parse_chat_json(path: str) -> list[dict]:
+    """Eager wrapper over :func:`stream_chat_sessions` returning a list.
+
+    Kept for callers/tests that need random access; the streaming
+    generator is preferred for large imports.
+    """
+    return list(stream_chat_sessions(path))
