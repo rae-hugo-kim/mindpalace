@@ -7,6 +7,42 @@ _TURN_TYPES = ("user", "assistant")
 _SENDER_ROLE_MAP = {"human": "user", "user": "user", "assistant": "assistant"}
 _SUPPORTED_CHAT_SCHEMA_VERSIONS = {1}
 
+# tool_use input keys that name a file on disk (AC2 code metadata).
+_FILE_PATH_KEYS = ("file_path", "notebook_path")
+
+
+def _scan_code_meta(content: Any, acc: dict) -> None:
+    """Accumulate AC2 code metadata from a message.content block list.
+
+    Walks tool_use blocks (tool name, file_path, Bash command) and
+    tool_result blocks (is_error) and folds them into ``acc`` (sets for
+    files/commands/tools, an int counter for errors). Non-list content
+    (plain user text) carries no tool blocks and is ignored.
+    """
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "tool_use":
+            name = block.get("name")
+            if name:
+                acc["tools"].add(name)
+            inp = block.get("input") or {}
+            if isinstance(inp, dict):
+                for key in _FILE_PATH_KEYS:
+                    val = inp.get(key)
+                    if isinstance(val, str) and val:
+                        acc["files"].add(val)
+                if name == "Bash":
+                    cmd = inp.get("command")
+                    if isinstance(cmd, str) and cmd:
+                        acc["commands"].add(cmd)
+        elif btype == "tool_result":
+            if block.get("is_error"):
+                acc["error_count"] += 1
+
 
 def _extract_text(content: Any) -> str:
     """Flatten a message.content field to plain text.
@@ -34,12 +70,15 @@ def parse_claude_code_jsonl(path: str) -> dict:
       turns: list[dict]  (user/assistant only; other record types skipped)
         each turn: {turn_id, role, text, timestamp, parent_id}
       extra: dict  (cwd, git_branch from first observed turn)
+      code_meta: dict  (AC2 derived index aggregated over the session:
+        files, commands, tools — sorted unique lists — and error_count)
     """
     p = Path(path)
     session_id = p.stem
     title: str | None = None
     turns: list[dict] = []
     extra: dict = {}
+    meta_acc = {"files": set(), "commands": set(), "tools": set(), "error_count": 0}
 
     with p.open() as f:
         for line in f:
@@ -56,6 +95,7 @@ def parse_claude_code_jsonl(path: str) -> dict:
                 title = obj.get("aiTitle")
             elif t in _TURN_TYPES:
                 msg = obj.get("message") or {}
+                _scan_code_meta(msg.get("content"), meta_acc)
                 turns.append(
                     {
                         "turn_id": obj.get("uuid", ""),
@@ -76,6 +116,12 @@ def parse_claude_code_jsonl(path: str) -> dict:
         "title": title,
         "turns": turns,
         "extra": extra,
+        "code_meta": {
+            "files": sorted(meta_acc["files"]),
+            "commands": sorted(meta_acc["commands"]),
+            "tools": sorted(meta_acc["tools"]),
+            "error_count": meta_acc["error_count"],
+        },
     }
 
 

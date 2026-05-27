@@ -93,6 +93,22 @@ def import_cmd(
         f"dedup_skipped={total_dedup}"
     )
 
+    if source == "code":
+        files: set[str] = set()
+        commands: set[str] = set()
+        tools: set[str] = set()
+        errors = 0
+        for sess in sessions:
+            cm = sess.get("code_meta") or {}
+            files.update(cm.get("files", []))
+            commands.update(cm.get("commands", []))
+            tools.update(cm.get("tools", []))
+            errors += int(cm.get("error_count", 0))
+        typer.echo(
+            f"  code metadata: files={len(files)} commands={len(commands)} "
+            f"tools={len(tools)} errors={errors}"
+        )
+
 
 @app.command("search")
 def search_cmd(
@@ -124,6 +140,11 @@ def search_cmd(
     title_like: str | None = typer.Option(
         None, "--title-like", help="Only sessions whose title contains this substring."
     ),
+    file_like: str | None = typer.Option(
+        None,
+        "--file-like",
+        help="Only code sessions whose extracted file paths contain this substring.",
+    ),
 ) -> None:
     """Run a semantic search over stored chunks."""
     results = search_chunks(
@@ -136,6 +157,7 @@ def search_cmd(
         where_since=since,
         where_until=until,
         where_title_like=title_like,
+        where_file_like=file_like,
     )
 
     if not results:

@@ -64,6 +64,41 @@ def _write_code_jsonl(p: Path) -> None:
             f.write(json.dumps(obj) + "\n")
 
 
+def _write_tool_code_jsonl(p: Path) -> None:
+    """Code JSONL whose assistant turns carry tool_use blocks (Bash/Read/Edit)
+    and a tool_result error, so code_meta extraction has something to find."""
+    lines = [
+        {"type": "ai-title", "aiTitle": "Refactoring search ranking"},
+        {
+            "type": "user", "uuid": "u1", "parentUuid": None,
+            "timestamp": "2026-05-26T10:00:00Z", "cwd": "/proj", "gitBranch": "main",
+            "message": {"content": "Refactor the ranking in search."},
+        },
+        {
+            "type": "assistant", "uuid": "a1", "parentUuid": "u1",
+            "timestamp": "2026-05-26T10:00:05Z",
+            "message": {"content": [
+                {"type": "text", "text": "Editing it now."},
+                {"type": "tool_use", "id": "x1", "name": "Edit",
+                 "input": {"file_path": "/proj/src/search.py"}},
+                {"type": "tool_use", "id": "x2", "name": "Bash",
+                 "input": {"command": "pytest -q"}},
+            ]},
+        },
+        {
+            "type": "user", "uuid": "u2", "parentUuid": "a1",
+            "timestamp": "2026-05-26T10:01:00Z",
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "x2", "is_error": True,
+                 "content": "1 failed"},
+            ]},
+        },
+    ]
+    with p.open("w") as f:
+        for obj in lines:
+            f.write(json.dumps(obj) + "\n")
+
+
 def _write_chat_json(p: Path) -> None:
     data = {
         "schema_version": 1,
@@ -298,6 +333,52 @@ def test_cli_search_title_like_filter(tmp_path: Path, warm_model: None) -> None:
     # Only the code session's title matches "walkthrough".
     assert "walkthrough" in result.output
     assert "Talking about MCP" not in result.output
+
+
+def test_cli_import_code_reports_meta_summary(tmp_path: Path, warm_model: None) -> None:
+    """T20 (RED, AC2): importing a code session prints a code-metadata
+    summary (files / commands / tools / errors counts)."""
+    runner = CliRunner()
+    jsonl_path = tmp_path / "rank-fix.jsonl"
+    db_path = tmp_path / "mp.db"
+    _write_tool_code_jsonl(jsonl_path)
+
+    result = runner.invoke(
+        app,
+        ["import", str(jsonl_path), "--source", "code", "--db", str(db_path)],
+    )
+    assert result.exit_code == 0, result.output
+    out = result.output.lower()
+    assert "files=1" in out
+    assert "commands=1" in out
+    assert "tools=2" in out
+    assert "errors=1" in out
+
+
+def test_cli_search_file_like_filter(tmp_path: Path, warm_model: None) -> None:
+    """T20 (RED, AC5/AC2): `--file-like` restricts results to code sessions
+    whose extracted file paths match the substring."""
+    runner = CliRunner()
+    rank_path = tmp_path / "rank-fix.jsonl"        # touches /proj/src/search.py
+    other_path = tmp_path / "mcp-setup.jsonl"      # plain text, no files
+    db_path = tmp_path / "mp.db"
+    _write_tool_code_jsonl(rank_path)
+    _write_code_jsonl(other_path)
+
+    runner.invoke(app, ["import", str(rank_path), "--source", "code", "--db", str(db_path)])
+    runner.invoke(app, ["import", str(other_path), "--source", "code", "--db", str(db_path)])
+
+    result = runner.invoke(
+        app,
+        ["search", "refactor ranking", "--db", str(db_path), "--top-k", "10",
+         "--file-like", "search.py"],
+    )
+    assert result.exit_code == 0, result.output
+    # Only the session touching search.py should match. The CLI prints
+    # titles, so check the matching session's title appears and the
+    # plain (no-file) session's title does not.
+    assert "Refactoring search ranking" in result.output  # tool jsonl title
+    assert "MCP setup walkthrough" not in result.output    # _write_code_jsonl title
 
 
 def test_cli_search_warns_when_all_low_confidence(tmp_path: Path, warm_model: None) -> None:

@@ -41,6 +41,7 @@ def search(
     where_since: str | None = None,
     where_until: str | None = None,
     where_title_like: str | None = None,
+    where_file_like: str | None = None,
 ) -> list[dict]:
     """Return the top-``top_k`` chunks most similar to ``query``.
 
@@ -59,6 +60,10 @@ def search(
                             (lexicographic ISO-8601 compare)
       ``where_until``       inclusive upper bound on chunk timestamp
       ``where_title_like``  case-insensitive substring match on title
+      ``where_file_like``   substring match on a code session's extracted
+                            file paths (``code_meta.files_json``); only
+                            code sessions carry these, so this implicitly
+                            restricts to source="code"
 
     Because the sqlite-vec MATCH clause is evaluated before the
     JOIN-side filters, whenever any filter is active we over-sample the
@@ -69,7 +74,13 @@ def search(
 
     has_filter = any(
         f is not None
-        for f in (where_source, where_since, where_until, where_title_like)
+        for f in (
+            where_source,
+            where_since,
+            where_until,
+            where_title_like,
+            where_file_like,
+        )
     )
     match_k = max(top_k * 20, 100) if has_filter else top_k
 
@@ -94,6 +105,12 @@ def search(
     if where_title_like is not None:
         sql += " AND c.title LIKE ?"
         params.append(f"%{where_title_like}%")
+    if where_file_like is not None:
+        sql += (
+            " AND c.session_id IN "
+            "(SELECT session_id FROM code_meta WHERE files_json LIKE ?)"
+        )
+        params.append(f"%{where_file_like}%")
     sql += " ORDER BY v.distance LIMIT ?"
     params.append(top_k)
 

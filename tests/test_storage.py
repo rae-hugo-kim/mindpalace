@@ -1,4 +1,5 @@
 """Tests for mindpalace.storage."""
+import json
 import sqlite3
 
 from mindpalace.storage import count_chunks, init_db, store_session
@@ -102,6 +103,65 @@ def test_store_session_skips_empty_text_turns(tmp_path):
     assert result["chunks_inserted"] == 1
     assert result["dedup_skipped"] == 0
     assert count_chunks(db) == 1
+
+
+def test_store_session_persists_code_meta(tmp_path):
+    """T20 (RED, AC2): a session carrying code_meta writes a derived
+    code_meta row; commands are masked; reimport is idempotent."""
+    db = str(tmp_path / "test.db")
+    init_db(db)
+    session = {
+        "session_id": "cm1",
+        "title": "Code session",
+        "turns": [
+            {"turn_id": "t1", "role": "user", "text": "do the thing",
+             "timestamp": "2026-05-01T00:00:00Z", "parent_id": None},
+        ],
+        "extra": {},
+        "code_meta": {
+            "files": ["/proj/src/search.py", "/proj/src/storage.py"],
+            "commands": ["export TOKEN=sk-fakekey1234567 && run"],
+            "tools": ["Bash", "Read"],
+            "error_count": 2,
+        },
+    }
+
+    store_session(db, session, source="code", embed_fn=_fake_embed)
+
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT files_json, commands_json, tools_json, error_count "
+        "FROM code_meta WHERE session_id='cm1'"
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    files_json, commands_json, tools_json, error_count = row
+    assert json.loads(files_json) == ["/proj/src/search.py", "/proj/src/storage.py"]
+    assert json.loads(tools_json) == ["Bash", "Read"]
+    assert error_count == 2
+    # command secret masked before persistence
+    assert "sk-fakekey1234567" not in commands_json
+    assert "[MASKED]" in commands_json
+
+    # reimport must not duplicate the code_meta row
+    store_session(db, session, source="code", embed_fn=_fake_embed)
+    conn = sqlite3.connect(db)
+    n = conn.execute("SELECT COUNT(*) FROM code_meta WHERE session_id='cm1'").fetchone()[0]
+    conn.close()
+    assert n == 1
+
+
+def test_store_session_without_code_meta_writes_no_row(tmp_path):
+    """T20 (RED, AC2): sessions lacking code_meta (e.g. chat) add no
+    code_meta row — the table stays code-only."""
+    db = str(tmp_path / "test.db")
+    init_db(db)
+    store_session(db, _sample_session_with_secret(), source="chat", embed_fn=_fake_embed)
+
+    conn = sqlite3.connect(db)
+    n = conn.execute("SELECT COUNT(*) FROM code_meta").fetchone()[0]
+    conn.close()
+    assert n == 0
 
 
 def test_store_session_records_source_and_metadata(tmp_path):

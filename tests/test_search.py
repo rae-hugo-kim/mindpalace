@@ -302,6 +302,41 @@ def test_search_filters_by_title_like(tmp_path):
     assert {r["session_id"] for r in res} == {"kv"}
 
 
+def test_search_filters_by_file_like(tmp_path):
+    """T20 (RED, AC5/AC2): where_file_like restricts hits to code sessions
+    whose extracted code_meta.files contain the substring.
+
+    Completes the "파일 path" arm of AC5, made possible by AC2 metadata
+    extraction.
+    """
+    db = str(tmp_path / "file-filter.db")
+    init_db(db)
+    search_sess = {
+        "session_id": "touches-search",
+        "title": "Edited search",
+        "turns": [{"turn_id": "t1", "role": "user", "text": "refactor the ranking",
+                   "timestamp": "2026-05-01T00:00:00Z", "parent_id": None}],
+        "extra": {},
+        "code_meta": {"files": ["/proj/src/search.py"], "commands": [],
+                      "tools": ["Edit"], "error_count": 0},
+    }
+    storage_sess = {
+        "session_id": "touches-storage",
+        "title": "Edited storage",
+        "turns": [{"turn_id": "t1", "role": "user", "text": "refactor the ranking",
+                   "timestamp": "2026-05-01T00:00:00Z", "parent_id": None}],
+        "extra": {},
+        "code_meta": {"files": ["/proj/src/storage.py"], "commands": [],
+                      "tools": ["Edit"], "error_count": 0},
+    }
+    store_session(db, search_sess, source="code", embed_fn=embed_chunk)
+    store_session(db, storage_sess, source="code", embed_fn=embed_chunk)
+
+    res = search(db, "refactor the ranking", embed_chunk, top_k=10,
+                 where_file_like="search.py")
+    assert {r["session_id"] for r in res} == {"touches-search"}
+
+
 def test_search_respects_top_k(tmp_path):
     """T9: top_k caps the number of results returned."""
     db = str(tmp_path / "topk.db")

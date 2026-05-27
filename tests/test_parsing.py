@@ -68,6 +68,60 @@ def test_parse_claude_code_jsonl_skips_non_turn_records(tmp_path):
     assert result["turns"][0]["text"] == "only this"
 
 
+def test_parse_claude_code_jsonl_extracts_code_meta(tmp_path):
+    """T20 (RED, AC2): tool_use/tool_result blocks yield code_meta
+    (files / commands / tools / error_count) aggregated per session.
+
+    Code metadata lives in tool_use blocks (Bash command, Read/Edit/Write
+    file_path) and tool_result blocks (is_error), all of which the text
+    flattener discards. AC2 requires them indexed.
+    """
+    p = tmp_path / "sess.jsonl"
+    lines = [
+        # assistant turn carrying two tool_use blocks
+        '{"type":"assistant","uuid":"a1","parentUuid":null,"timestamp":"t",'
+        '"message":{"role":"assistant","content":['
+        '{"type":"text","text":"running it"},'
+        '{"type":"tool_use","id":"x1","name":"Bash","input":{"command":"pytest -q","description":"run tests"}},'
+        '{"type":"tool_use","id":"x2","name":"Read","input":{"file_path":"/proj/src/search.py"}}'
+        ']}}',
+        # user turn carrying tool_result blocks (one error)
+        '{"type":"user","uuid":"u1","parentUuid":"a1","timestamp":"t",'
+        '"message":{"role":"user","content":['
+        '{"type":"tool_result","tool_use_id":"x1","is_error":true,"content":"boom"},'
+        '{"type":"tool_result","tool_use_id":"x2","is_error":false,"content":"ok"}'
+        ']}}',
+        # another assistant turn: Edit (file_path) + Bash again (dedup commands)
+        '{"type":"assistant","uuid":"a2","parentUuid":"u1","timestamp":"t",'
+        '"message":{"role":"assistant","content":['
+        '{"type":"tool_use","id":"x3","name":"Edit","input":{"file_path":"/proj/src/storage.py"}},'
+        '{"type":"tool_use","id":"x4","name":"Bash","input":{"command":"pytest -q"}}'
+        ']}}',
+    ]
+    p.write_text("\n".join(lines))
+
+    result = parse_claude_code_jsonl(str(p))
+    meta = result["code_meta"]
+
+    assert meta["files"] == ["/proj/src/search.py", "/proj/src/storage.py"]
+    assert meta["commands"] == ["pytest -q"]  # deduped
+    assert meta["tools"] == ["Bash", "Edit", "Read"]  # sorted unique
+    assert meta["error_count"] == 1
+
+
+def test_parse_claude_code_jsonl_no_tools_empty_code_meta(tmp_path):
+    """T20 (RED, AC2): a session with no tool blocks yields empty code_meta."""
+    p = tmp_path / "plain.jsonl"
+    lines = [
+        '{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"t",'
+        '"message":{"role":"user","content":"just text"}}',
+    ]
+    p.write_text("\n".join(lines))
+
+    meta = parse_claude_code_jsonl(str(p))["code_meta"]
+    assert meta == {"files": [], "commands": [], "tools": [], "error_count": 0}
+
+
 def test_parse_chat_json_basic(tmp_path):
     """T5b (RED): chat JSON with conversations -> list of session dicts.
 

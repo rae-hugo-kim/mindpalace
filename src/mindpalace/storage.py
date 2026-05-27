@@ -49,6 +49,15 @@ _SCHEMA_SQL = [
         ingested_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS code_meta (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id),
+        files_json TEXT NOT NULL,
+        commands_json TEXT NOT NULL,
+        tools_json TEXT NOT NULL,
+        error_count INTEGER NOT NULL DEFAULT 0
+    )
+    """,
     f"""
     CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vec USING vec0(
         embedding float[{EMBEDDING_DIM}]
@@ -117,6 +126,27 @@ def store_session(
             (session_id, source, title, extra_json, now),
         )
         sessions_inserted = sess_cur.rowcount
+
+        code_meta = session.get("code_meta")
+        if code_meta:
+            # Commands are free text and may contain secrets (e.g.
+            # `export TOKEN=sk-...`), so mask them like chunk text. Files
+            # and tool names are structural and stored verbatim. Keyed on
+            # session_id PRIMARY KEY → idempotent on reimport (derived
+            # index, rebuildable from raw).
+            masked_commands = [mask_secrets(c) for c in code_meta.get("commands", [])]
+            conn.execute(
+                "INSERT OR IGNORE INTO code_meta "
+                "(session_id, files_json, commands_json, tools_json, error_count) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    session_id,
+                    json.dumps(code_meta.get("files", []), ensure_ascii=False),
+                    json.dumps(masked_commands, ensure_ascii=False),
+                    json.dumps(code_meta.get("tools", []), ensure_ascii=False),
+                    int(code_meta.get("error_count", 0)),
+                ),
+            )
 
         chunks_inserted = 0
         dedup_skipped = 0
