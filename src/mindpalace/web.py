@@ -60,6 +60,7 @@ _PAGE_HEAD = """<!doctype html>
  details.turn>summary .pv{color:#888}
  .role-user{border-left:3px solid #2b6cb0;padding-left:.5rem}
  .role-assistant{border-left:3px solid #e2e8f0;padding-left:.5rem;color:#333}
+ details.semantic-section>summary{cursor:pointer;color:#888;font-size:.95rem;margin:1rem 0 .5rem;font-weight:600}
 </style></head><body>
 <h1>mindpalace</h1>
 """
@@ -104,23 +105,24 @@ def _form(
 _COLLAPSE_CHARS = 280
 
 
-def _turn_text(text: str, role: str = "", open_: bool = False) -> str:
-    """Render turn text with preserved whitespace; fold long turns.
+def _turn_text(text: str, role: str = "", foldable: bool = True) -> str:
+    """Render turn text with preserved whitespace; optionally fold long turns.
 
-    Long turns (agent reasoning walls) collapse into a no-JS <details>
-    showing a one-line preview; the full text stays in the DOM. A role
-    class lets user vs assistant be told apart at a glance. ``open_``
-    expands the fold by default (used for the highlighted hit turn).
+    A role class lets user vs assistant be told apart at a glance. When
+    ``foldable`` and the text is long, it collapses into a no-JS <details>
+    preview (full text stays in the DOM). The matched (hit) turn and user
+    turns pass ``foldable=False`` so the answer is never hidden — chat
+    exports bundle an assistant's reasoning and answer into one turn, so
+    folding the hit would hide the answer too.
     """
     raw = text or ""
     role_cls = f"role-{role}" if role in ("user", "assistant") else ""
     escaped = html.escape(raw)
-    if len(raw) <= _COLLAPSE_CHARS:
+    if not foldable or len(raw) <= _COLLAPSE_CHARS:
         return f'<div class="turntext {role_cls}">{escaped}</div>'
     preview = html.escape(raw[:120].replace("\n", " "))
-    open_attr = " open" if open_ else ""
     return (
-        f'<details class="turn {role_cls}"{open_attr}><summary>'
+        f'<details class="turn {role_cls}"><summary>'
         f'<span class="pv">{preview}…</span></summary>'
         f'<div class="turntext">{escaped}</div></details>'
     )
@@ -154,7 +156,8 @@ def _render_context(rows: list[dict]) -> str:
         marker = "► " if is_hit else "  "
         role = html.escape(r.get("role") or "")
         cls = "row hit" if is_hit else "row"
-        body = _turn_text(r.get("text") or "", r.get("role") or "")
+        foldable = (r.get("role") == "assistant") and not is_hit
+        body = _turn_text(r.get("text") or "", r.get("role") or "", foldable=foldable)
         parts.append(f'<div class="{cls}">{marker}{role}: {body}</div>')
     parts.append("</div>")
     return "".join(parts)
@@ -188,7 +191,7 @@ def _render_hit(
         f'<div class="{cls}">'
         f'<div class="meta">[{i}] {score} · '
         f"source={source} · role={role} · title={title}{warn}</div>"
-        f"{_turn_text(hit.get('text') or '', hit.get('role') or '')}"
+        f"{_turn_text(hit.get('text') or '', hit.get('role') or '', foldable=False)}"
         f"{_code_meta_badge(code_meta)}"
         f"{_render_context(context_rows or [])}"
         f"{nlink}"
@@ -284,14 +287,26 @@ def create_app(db_path: str) -> FastAPI:
             body += _render_list(keyword)
 
         if semantic:
-            if all(r["low_confidence"] for r in semantic):
+            if keyword:
+                # Exact matches already answered the query; embeddings can't
+                # rank rare proper nouns, so demote the noisier semantic
+                # results into a collapsed section the user can opt into.
                 body += (
-                    f'<p class="warn">🧭 semantic — high-confidence 매치 없음, 아래 '
-                    f"{len(semantic)}건은 best-effort(모두 low-confidence)입니다.</p>"
+                    '<details class="semantic-section"><summary>'
+                    f"🧭 semantic — {len(semantic)}건 (정확도 낮을 수 있음, 펼쳐 보기)"
+                    "</summary>"
                 )
+                body += _render_list(semantic)
+                body += "</details>"
             else:
-                body += f"<h3>🧭 semantic — {len(semantic)}</h3>"
-            body += _render_list(semantic)
+                if all(r["low_confidence"] for r in semantic):
+                    body += (
+                        f'<p class="warn">🧭 semantic — high-confidence 매치 없음, 아래 '
+                        f"{len(semantic)}건은 best-effort(모두 low-confidence)입니다.</p>"
+                    )
+                else:
+                    body += f"<h3>🧭 semantic — {len(semantic)}</h3>"
+                body += _render_list(semantic)
 
         return _PAGE_HEAD + body + _PAGE_TAIL
 
@@ -353,7 +368,8 @@ def create_app(db_path: str) -> FastAPI:
             marker = "► " if is_hit else "  "
             role = html.escape(t.get("role") or "")
             cls = "row hit" if is_hit else "row"
-            body_text = _turn_text(t.get("text") or "", t.get("role") or "", open_=bool(is_hit))
+            foldable = (t.get("role") == "assistant") and not is_hit
+            body_text = _turn_text(t.get("text") or "", t.get("role") or "", foldable=foldable)
             parts.append(f'<div class="{cls}">{marker}{role}: {body_text}</div>')
         parts.append("</div>")
         body += "".join(parts)

@@ -289,23 +289,31 @@ def test_web_text_preserves_whitespace(tmp_path: Path, warm_model: None) -> None
     assert "pre-wrap" in resp.text
 
 
-def test_web_long_turn_is_collapsible(tmp_path: Path, warm_model: None) -> None:
-    """T30 (RED): a long assistant turn (agent reasoning wall) renders inside a
-    collapsible <details> so it doesn't flood the page; the full text is still
-    present in the DOM."""
+def test_web_long_context_turn_is_collapsible(tmp_path: Path, warm_model: None) -> None:
+    """T30/T31 (RED): a long assistant turn shown as *context* (not the hit)
+    folds into a collapsible <details> so it doesn't flood the page; the full
+    text stays in the DOM. (The hit turn itself is never folded — see
+    test_web_hit_turn_not_folded.)"""
     db = str(tmp_path / "long.db")
     init_db(db)
-    long_text = "ZQMARKER 사고 과정입니다. " + ("이것은 매우 긴 추론 텍스트입니다. " * 40)
+    long_text = "사고 과정입니다. " + ("이것은 매우 긴 추론 텍스트입니다. " * 40)
     store_session(db, {
         "session_id": "s", "title": "긴 추론", "extra": {},
-        "turns": [{"turn_id": "t1", "role": "assistant", "text": long_text,
-                   "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
+        "turns": [
+            {"turn_id": "t1", "role": "user", "text": "ZQMARKER 짧은 질문",
+             "timestamp": "2026-05-10T00:00:00Z", "parent_id": None},
+            {"turn_id": "t2", "role": "assistant", "text": long_text,
+             "timestamp": "2026-05-10T00:00:05Z", "parent_id": "t1"},
+        ],
     }, source="chat", embed_fn=embed_chunk)
 
-    resp = TestClient(create_app(db)).get("/search", params={"q": "ZQMARKER", "top_k": 1})
+    # keyword hit is the short user turn t1; t2 (long assistant) appears as context
+    resp = TestClient(create_app(db)).get(
+        "/search", params={"q": "ZQMARKER", "top_k": 1, "context": 1}
+    )
     assert resp.status_code == 200
-    assert "<details" in resp.text          # collapsed
-    assert "ZQMARKER" in resp.text           # full text still in DOM
+    assert "<details" in resp.text          # the long context turn folds
+    assert "매우 긴 추론" in resp.text        # full text still in DOM
 
 
 def test_web_roles_visually_distinguished(tmp_path: Path, warm_model: None) -> None:
@@ -315,6 +323,47 @@ def test_web_roles_visually_distinguished(tmp_path: Path, warm_model: None) -> N
         "/search", params={"q": "How do I set up MCP servers?", "top_k": 1}
     )
     assert "role-user" in resp.text or "role-assistant" in resp.text
+
+
+def test_web_hit_turn_not_folded(tmp_path: Path, warm_model: None) -> None:
+    """T31 (RED): the matched turn carries the answer, so it must render in
+    full (not collapsed) even when long — folding it would hide the answer."""
+    db = str(tmp_path / "hitfold.db")
+    init_db(db)
+    long_ans = "ANSWERMARK 결론은 이렇습니다. " + ("상세한 설명이 길게 이어집니다. " * 40)
+    store_session(db, {
+        "session_id": "s", "title": "긴 답변", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "assistant", "text": long_ans,
+                   "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
+    }, source="chat", embed_fn=embed_chunk)
+
+    resp = TestClient(create_app(db)).get(
+        "/search", params={"q": "ANSWERMARK", "top_k": 1, "context": 0}
+    )
+    assert resp.status_code == 200
+    assert "ANSWERMARK" in resp.text
+    assert "<details" not in resp.text  # the hit answer is shown in full
+
+
+def test_web_semantic_section_collapsed_when_keyword_hits(tmp_path: Path, warm_model: None) -> None:
+    """T31 (RED): when exact keyword matches exist, the noisier semantic
+    results are demoted into a collapsed section."""
+    db = str(tmp_path / "demote.db")
+    init_db(db)
+    store_session(db, {
+        "session_id": "drug", "title": "마운자로", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "user", "text": "마운자로 부작용 설사",
+                   "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
+    }, source="chat", embed_fn=embed_chunk)
+    store_session(db, {
+        "session_id": "noise", "title": "잡담", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "user", "text": "청사초롱 노래 가사",
+                   "timestamp": "2026-05-11T00:00:00Z", "parent_id": None}],
+    }, source="chat", embed_fn=embed_chunk)
+
+    resp = TestClient(create_app(db)).get("/search", params={"q": "마운자로", "top_k": 3})
+    assert resp.status_code == 200
+    assert "semantic-section" in resp.text  # semantic demoted into a collapsed block
 
 
 def test_search_escapes_html_in_results(tmp_path: Path, warm_model: None) -> None:
