@@ -5,13 +5,16 @@ description = "Personal knowledge vault for Claude Code sessions and Claude web/
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.136.3",
     "sentence-transformers>=5.5.1",
     "sqlite-vec>=0.1.9",
     "typer>=0.25.1",
+    "uvicorn>=0.48.0",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=8.0",
 ]
 

@@ -195,6 +195,24 @@ def neighbors_cmd(
         )
 
 
+@app.command("serve")
+def serve_cmd(
+    db: Path = typer.Option(..., "--db", help="SQLite DB path."),
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind address (0.0.0.0 for mesh access)."),
+    port: int = typer.Option(8000, "--port", help="Port to listen on."),
+) -> None:
+    """Launch the web UI (binds 0.0.0.0 by default for Tailscale/VPN mesh)."""
+    import uvicorn
+
+    from mindpalace.web import create_app
+
+    typer.echo(
+        f"serving mindpalace web UI on http://{host}:{port}  (db={db})\n"
+        "  exposure is your responsibility — keep this behind Tailscale/VPN, not a public URL."
+    )
+    uvicorn.run(create_app(str(db)), host=host, port=port)
+
+
 def main() -> None:
     app()
 
