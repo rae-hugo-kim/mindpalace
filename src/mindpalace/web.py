@@ -61,6 +61,12 @@ _PAGE_HEAD = """<!doctype html>
  .role-user{border-left:3px solid #2b6cb0;padding-left:.5rem}
  .role-assistant{border-left:3px solid #e2e8f0;padding-left:.5rem;color:#333}
  details.semantic-section>summary{cursor:pointer;color:#888;font-size:.95rem;margin:1rem 0 .5rem;font-weight:600}
+ .snippet{margin:.35rem 0;color:#333}
+ details.hit-body>summary{cursor:pointer;color:#666;font-size:.85rem;margin-top:.35rem;list-style:none}
+ details.hit-body>summary::-webkit-details-marker{display:none}
+ details.hit-body>summary::before{content:"▸ ";color:#999}
+ details.hit-body[open]>summary::before{content:"▾ "}
+ mark{background:#fff3a3;padding:0 .15em;border-radius:2px}
 </style></head><body>
 <h1>mindpalace</h1>
 """
@@ -128,6 +134,38 @@ def _turn_text(text: str, role: str = "", foldable: bool = True) -> str:
     )
 
 
+_SNIPPET_CHARS = 200
+
+
+def _match_snippet(text: str, query: str, *, is_keyword: bool,
+                    window: int = _SNIPPET_CHARS) -> str:
+    """A scannable preview that shows the *reason* this hit matched.
+
+    For keyword hits, returns a substring window centered on the first
+    occurrence of ``query`` with the match wrapped in ``<mark>``. For
+    semantic hits (or when no occurrence is found), returns the head of
+    the chunk. Newlines collapse to spaces; ellipses mark truncation.
+    All embedded text is HTML-escaped; only ``<mark>`` is added.
+    """
+    raw = (text or "").replace("\n", " ")
+    if is_keyword and query:
+        low = raw.lower()
+        i = low.find(query.lower())
+        if i >= 0:
+            half = window // 2
+            start = max(0, i - half)
+            end = min(len(raw), i + len(query) + half)
+            pre = html.escape(raw[start:i])
+            mid = html.escape(raw[i:i + len(query)])
+            post = html.escape(raw[i + len(query):end])
+            lead = "…" if start > 0 else ""
+            trail = "…" if end < len(raw) else ""
+            return f"{lead}{pre}<mark>{mid}</mark>{post}{trail}"
+    head = raw[:window]
+    trail = "…" if len(raw) > window else ""
+    return html.escape(head) + trail
+
+
 def _code_meta_badge(meta: dict | None) -> str:
     """Render a compact code-metadata badge (AC2) for a code hit."""
     if not meta:
@@ -168,6 +206,7 @@ def _render_hit(
     hit: dict,
     code_meta: dict | None = None,
     context_rows: list[dict] | None = None,
+    query: str = "",
 ) -> str:
     title = html.escape(str(hit.get("title") or ""))
     role = html.escape(hit.get("role") or "")
@@ -187,11 +226,24 @@ def _render_hit(
         f' · <a href="/neighbors?session_id={sid_q}">↔ neighbors (학습↔작업)</a>'
         "</div>"
     )
+    raw_text = hit.get("text") or ""
+    if len(raw_text) <= _COLLAPSE_CHARS:
+        body = _turn_text(raw_text, hit.get("role") or "", foldable=False)
+    else:
+        is_keyword = hit.get("match") == "keyword"
+        snippet = _match_snippet(raw_text, query, is_keyword=is_keyword)
+        full = _turn_text(raw_text, hit.get("role") or "", foldable=False)
+        body = (
+            f'<div class="snippet">{snippet}</div>'
+            f'<details class="hit-body"><summary>'
+            f"본문 펼치기 (전체 {len(raw_text)}자)"
+            f"</summary>{full}</details>"
+        )
     return (
         f'<div class="{cls}">'
         f'<div class="meta">[{i}] {score} · '
         f"source={source} · role={role} · title={title}{warn}</div>"
-        f"{_turn_text(hit.get('text') or '', hit.get('role') or '', foldable=False)}"
+        f"{body}"
         f"{_code_meta_badge(code_meta)}"
         f"{_render_context(context_rows or [])}"
         f"{nlink}"
@@ -265,7 +317,7 @@ def create_app(db_path: str) -> FastAPI:
                 if context > 0:
                     turn_id = h["chunk_id"][len(sid) + 1:]
                     ctx_rows = get_chunk_context(db_path, sid, turn_id, window=context)
-                parts.append(_render_hit(i, h, code_meta=cm, context_rows=ctx_rows))
+                parts.append(_render_hit(i, h, code_meta=cm, context_rows=ctx_rows, query=q))
             return "".join(parts)
 
         if total == 0:

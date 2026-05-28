@@ -325,12 +325,16 @@ def test_web_roles_visually_distinguished(tmp_path: Path, warm_model: None) -> N
     assert "role-user" in resp.text or "role-assistant" in resp.text
 
 
-def test_web_hit_turn_not_folded(tmp_path: Path, warm_model: None) -> None:
-    """T31 (RED): the matched turn carries the answer, so it must render in
-    full (not collapsed) even when long — folding it would hide the answer."""
-    db = str(tmp_path / "hitfold.db")
+def test_web_long_hit_renders_snippet_plus_collapsed_body(tmp_path: Path, warm_model: None) -> None:
+    """T32 (RED): long matched turns become a scannable card — a snippet that
+    shows the reason (matched phrase) + a collapsed body the user can expand.
+    Replaces T31's 'hit never folds' rule: the snippet preserves visibility of
+    the matched/answer-bearing phrase without flooding the page."""
+    db = str(tmp_path / "longhit.db")
     init_db(db)
-    long_ans = "ANSWERMARK 결론은 이렇습니다. " + ("상세한 설명이 길게 이어집니다. " * 40)
+    long_ans = ("앞쪽 추론 문장이 한참 이어집니다. " * 20
+                + "ANSWERMARK 결론은 이렇습니다. "
+                + "추가 설명이 또 한참 이어집니다. " * 20)
     store_session(db, {
         "session_id": "s", "title": "긴 답변", "extra": {},
         "turns": [{"turn_id": "t1", "role": "assistant", "text": long_ans,
@@ -341,8 +345,37 @@ def test_web_hit_turn_not_folded(tmp_path: Path, warm_model: None) -> None:
         "/search", params={"q": "ANSWERMARK", "top_k": 1, "context": 0}
     )
     assert resp.status_code == 200
-    assert "ANSWERMARK" in resp.text
-    assert "<details" not in resp.text  # the hit answer is shown in full
+    assert 'class="hit-body"' in resp.text   # collapsed full body
+    assert "<mark>" in resp.text              # keyword highlighted in snippet
+    assert "ANSWERMARK" in resp.text          # matched phrase visible (snippet)
+
+
+def test_web_keyword_snippet_highlights_match(tmp_path: Path, warm_model: None) -> None:
+    """T32 (RED): a keyword hit's snippet wraps the matched substring in
+    <mark> so the reason for the hit is obvious at a glance."""
+    db = str(tmp_path / "mark.db")
+    init_db(db)
+    text = ("앞쪽 문맥 한참. " * 30) + " UNIQTOKEN 결론. " + ("뒤쪽 문맥 한참. " * 30)
+    store_session(db, {
+        "session_id": "u", "title": "highlight test", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "assistant", "text": text,
+                   "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
+    }, source="chat", embed_fn=embed_chunk)
+
+    resp = TestClient(create_app(db)).get(
+        "/search", params={"q": "UNIQTOKEN", "top_k": 1, "context": 0}
+    )
+    assert "<mark>UNIQTOKEN</mark>" in resp.text
+
+
+def test_web_short_hit_not_folded(tmp_path: Path, warm_model: None) -> None:
+    """T32 (RED): short hits stay fully inline (no body fold) — folding
+    short turns adds clicks without a readability benefit."""
+    resp = TestClient(create_app(_populated_db(tmp_path))).get(
+        "/search", params={"q": "How do I set up MCP servers?", "top_k": 1, "context": 0}
+    )
+    assert resp.status_code == 200
+    assert 'class="hit-body"' not in resp.text  # short hit: no body fold
 
 
 def test_web_semantic_section_collapsed_when_keyword_hits(tmp_path: Path, warm_model: None) -> None:
