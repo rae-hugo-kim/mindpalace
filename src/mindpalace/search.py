@@ -14,18 +14,19 @@ from typing import Callable
 
 import sqlite_vec
 
+from mindpalace.embedding import embed_query
 from mindpalace.obs import get_logger
 
 EmbedFn = Callable[[str], list[float]]
 
 _log = get_logger("mindpalace.search")
 
-# Default L2 cut-off for paraphrase-multilingual-MiniLM-L12-v2 distances.
-# Empirical: dry-run #1 showed good matches at ~3.2–3.5 and clearly-off
-# matches at ~4.8+. 4.0 splits the band; chunks above it get a
-# low_confidence label so the caller can warn the user rather than
-# presenting them as confident hits.
-DEFAULT_CONFIDENCE_THRESHOLD = 4.0
+# Default L2 cut-off for multilingual-e5-large normalized vectors.
+# Empirically (small MCP corpus): on-topic ~0.53, off-topic ~0.71-0.75.
+# 0.7 splits the band; chunks above get a low_confidence label so the
+# caller can warn rather than presenting them as confident hits. Tune
+# per corpus via the ``--min-confidence`` flag.
+DEFAULT_CONFIDENCE_THRESHOLD = 0.7
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -111,7 +112,9 @@ def search(
     ``top_k`` so the filters don't starve the result set.
     """
     t0 = time.perf_counter()
-    query_vec = embed_fn(query)
+    # e5 is asymmetric: queries need the "query:" prefix that embed_fn
+    # (used for stored passages) does not apply. Use embed_query here.
+    query_vec = embed_query(query)
 
     has_filter = any(
         f is not None

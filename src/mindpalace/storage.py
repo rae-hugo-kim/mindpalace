@@ -112,7 +112,12 @@ def reindex_vectors(db_path: str, embed_fn: EmbedFn) -> dict:
     """
     conn = _connect(db_path)
     try:
-        conn.execute("DELETE FROM chunk_vec")
+        # Drop and recreate so a dimension change (model upgrade) is
+        # transparently handled — DELETE alone keeps the old schema.
+        conn.execute("DROP TABLE IF EXISTS chunk_vec")
+        conn.execute(
+            f"CREATE VIRTUAL TABLE chunk_vec USING vec0(embedding float[{EMBEDDING_DIM}])"
+        )
         rows = conn.execute("SELECT rowid, text FROM chunks ORDER BY rowid").fetchall()
         reindexed = 0
         for rowid, text in rows:

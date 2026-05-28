@@ -1,12 +1,12 @@
 """Tests for mindpalace.embedding.
 
 NOTE: These tests touch the real sentence-transformers model
-(``paraphrase-multilingual-MiniLM-L12-v2``). First run downloads
-~470MB and may take 1-5 minutes; subsequent runs hit the local cache.
+(``intfloat/multilingual-e5-large``). First run downloads ~2GB and
+may take 5-15 minutes; subsequent runs hit the local cache.
 """
 import pytest
 
-from mindpalace.embedding import EMBEDDING_DIM, embed_chunk
+from mindpalace.embedding import EMBEDDING_DIM, embed_chunk, embed_query
 
 
 @pytest.fixture(scope="module")
@@ -35,3 +35,12 @@ def test_embed_chunk_distinguishes_different_text(warm_model):
     v1 = embed_chunk("How do I configure MCP servers?")
     v2 = embed_chunk("What is the capital of France?")
     assert v1 != v2
+
+
+def test_query_and_chunk_use_different_prefixes(warm_model):
+    """T34: e5 is asymmetric — the same text encoded as a query vs as a
+    passage must yield different vectors (because of the prefix)."""
+    same_text = "음악 스타일"
+    assert embed_query(same_text) != embed_chunk(same_text)
+    # Both still have the configured dimension.
+    assert len(embed_query(same_text)) == EMBEDDING_DIM

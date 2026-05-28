@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+from mindpalace.embedding import EMBEDDING_DIM
 from mindpalace.storage import (
     _connect,
     count_chunks,
@@ -15,7 +16,7 @@ from mindpalace.storage import (
 
 def _fake_embed(text: str) -> list[float]:
     """Cheap stand-in embedding used to keep storage tests fast and deterministic."""
-    return [float(len(text)) / 1000.0] * 384
+    return [float(len(text)) / 1000.0] * EMBEDDING_DIM
 
 
 def _sample_session_with_secret() -> dict:
