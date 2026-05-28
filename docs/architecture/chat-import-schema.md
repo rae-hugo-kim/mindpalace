@@ -2,7 +2,7 @@
 
 **Source**: 사용자가 Claude.ai 공식 export(요청 후 메일 수신)를 받아 본인 채팅만 분리/가공한 JSON.
 **Schema version**: 1 (in-file `schema_version` 필드)
-**Confirmed**: 2026-05-26 (`data/imports/claude-chat/rae_chats.json`, 91MB, 402 conversations, 6803 messages, 0 other_users_excluded)
+**Confirmed**: 2026-05-26 (`data/imports/claude-chat/chat-export.json`, 91MB, 402 conversations, 6803 messages, 0 other_users_excluded)
 
 이 명세는 v0 import 모듈의 **권위 있는 입력 컨트랙트**. Anthropic 공식 export 포맷에 직접 의존하지 않고, 사용자가 가공한 안정적 형식을 사용함 (CRITICAL #1 해소).
 
@@ -14,11 +14,11 @@
 | `exported_at` | ISO timestamp | export 가공 시점 |
 | `source_export_root` | str | 원본 export 경로 (anonymized) |
 | `user` | dict | `{email_address, full_name, uuid}` |
-| `summary` | dict | 통계 요약 (`conversations`, `messages_total`, `projects_created_by_rae`, `design_chats.*`) |
+| `summary` | dict | 통계 요약 (`conversations`, `messages_total`, `projects_created_by_user`, `design_chats.*`) |
 | `notes` | dict | 사용자가 작성한 처리 정책 메모 (`design_chats`, `scope_choice` 등) |
 | `conversations` | list | 채팅 세션 N개 (메인 데이터, v0 import 대상) |
 | `projects` | list | Claude Projects (참조 메타, v1+) |
-| `design_chats` | dict | `{in_rae_projects, orphans, unattributable}` 분류 |
+| `design_chats` | dict | `{in_user_projects, orphans, unattributable}` 분류 |
 
 ## conversation (in `conversations[]`)
 

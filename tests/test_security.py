@@ -8,7 +8,7 @@ from mindpalace.security import _mount_device_for
 
 _SAMPLE_MOUNTS = """\
 /dev/sdb / ext4 rw,relatime 0 0
-/dev/mapper/cryptdata /home/rae/vault ext4 rw,relatime 0 0
+/dev/mapper/cryptdata /home/user/vault ext4 rw,relatime 0 0
 tmpfs /tmp tmpfs rw,nosuid 0 0
 drvfs /mnt/c 9p rw 0 0
 """
@@ -16,8 +16,8 @@ drvfs /mnt/c 9p rw 0 0
 
 def test_mount_device_for_picks_longest_matching_mountpoint():
     """T17 (RED): the device of the most-specific mountpoint prefix wins."""
-    # A path under /home/rae/vault must map to the cryptdata device, not /.
-    dev = _mount_device_for("/home/rae/vault/mp.db", _SAMPLE_MOUNTS)
+    # A path under /home/user/vault must map to the cryptdata device, not /.
+    dev = _mount_device_for("/home/user/vault/mp.db", _SAMPLE_MOUNTS)
     assert dev == "/dev/mapper/cryptdata"
 
 

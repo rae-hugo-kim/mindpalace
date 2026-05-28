@@ -364,12 +364,12 @@ def test_search_logs_latency(tmp_path, caplog):
 
 
 def _store_keyword_corpus(db: str) -> None:
-    """A rare proper noun ('마운자로') that the embedding model represents
+    """A rare proper noun ('조플렉신') that the embedding model represents
     poorly, plus unrelated content that semantic search prefers."""
     store_session(db, {
-        "session_id": "drug", "title": "마운자로 부작용", "extra": {},
+        "session_id": "drug", "title": "조플렉신 부작용", "extra": {},
         "turns": [{"turn_id": "t1", "role": "user",
-                   "text": "마운자로 5mg 맞고 설사가 심한데 정상인가요?",
+                   "text": "조플렉신 5mg 맞고 설사가 심한데 정상인가요?",
                    "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
     }, source="chat", embed_fn=embed_chunk)
     store_session(db, {
@@ -383,7 +383,7 @@ def _store_keyword_corpus(db: str) -> None:
 def test_keyword_search_finds_exact_substring(tmp_path):
     """T29 (RED): keyword_search does a substring match the embedding misses.
 
-    '마운자로' (a drug brand name) is a rare proper noun the multilingual
+    '조플렉신' (a drug brand name) is a rare proper noun the multilingual
     model can't represent, so semantic search ranks it below noise; a LIKE
     match nails it. Results carry match='keyword'.
     """
@@ -391,7 +391,7 @@ def test_keyword_search_finds_exact_substring(tmp_path):
     init_db(db)
     _store_keyword_corpus(db)
 
-    res = keyword_search(db, "마운자로", top_k=10)
+    res = keyword_search(db, "조플렉신", top_k=10)
     assert [r["session_id"] for r in res] == ["drug"]
     assert res[0]["match"] == "keyword"
     assert res[0]["distance"] is None  # keyword hits have no vector distance
@@ -407,7 +407,7 @@ def test_hybrid_search_merges_keyword_first_deduped(tmp_path):
     init_db(db)
     _store_keyword_corpus(db)
 
-    out = hybrid_search(db, "마운자로", embed_chunk, top_k=5)
+    out = hybrid_search(db, "조플렉신", embed_chunk, top_k=5)
     assert "keyword" in out and "semantic" in out
     kw_ids = {r["chunk_id"] for r in out["keyword"]}
     assert "drug:t1" in kw_ids
@@ -445,7 +445,7 @@ def test_keyword_search_trims_surrounding_whitespace(tmp_path):
     init_db(db)
     _store_keyword_corpus(db)
 
-    res = keyword_search(db, "  마운자로  ", top_k=10)
+    res = keyword_search(db, "  조플렉신  ", top_k=10)
     assert [r["session_id"] for r in res] == ["drug"]
 
 

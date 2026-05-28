@@ -288,9 +288,9 @@ def test_web_hybrid_keyword_section(tmp_path: Path, warm_model: None) -> None:
     db = str(tmp_path / "hyb-web.db")
     init_db(db)
     store_session(db, {
-        "session_id": "drug", "title": "마운자로 부작용", "extra": {},
+        "session_id": "drug", "title": "조플렉신 부작용", "extra": {},
         "turns": [{"turn_id": "t1", "role": "user",
-                   "text": "마운자로 5mg 부작용 설사 정상인가요",
+                   "text": "조플렉신 5mg 부작용 설사 정상인가요",
                    "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
     }, source="chat", embed_fn=embed_chunk)
     store_session(db, {
@@ -300,9 +300,9 @@ def test_web_hybrid_keyword_section(tmp_path: Path, warm_model: None) -> None:
                    "parent_id": None}],
     }, source="code", embed_fn=embed_chunk)
 
-    resp = TestClient(create_app(db)).get("/search", params={"q": "마운자로", "top_k": 3})
+    resp = TestClient(create_app(db)).get("/search", params={"q": "조플렉신", "top_k": 3})
     assert resp.status_code == 200
-    assert "마운자로 5mg 부작용" in resp.text
+    assert "조플렉신 5mg 부작용" in resp.text
     assert "keyword" in resp.text.lower() or "정확" in resp.text
 
 
@@ -408,8 +408,8 @@ def test_web_semantic_section_collapsed_when_keyword_hits(tmp_path: Path, warm_m
     db = str(tmp_path / "demote.db")
     init_db(db)
     store_session(db, {
-        "session_id": "drug", "title": "마운자로", "extra": {},
-        "turns": [{"turn_id": "t1", "role": "user", "text": "마운자로 부작용 설사",
+        "session_id": "drug", "title": "조플렉신", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "user", "text": "조플렉신 부작용 설사",
                    "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
     }, source="chat", embed_fn=embed_chunk)
     store_session(db, {
@@ -418,7 +418,7 @@ def test_web_semantic_section_collapsed_when_keyword_hits(tmp_path: Path, warm_m
                    "timestamp": "2026-05-11T00:00:00Z", "parent_id": None}],
     }, source="chat", embed_fn=embed_chunk)
 
-    resp = TestClient(create_app(db)).get("/search", params={"q": "마운자로", "top_k": 3})
+    resp = TestClient(create_app(db)).get("/search", params={"q": "조플렉신", "top_k": 3})
     assert resp.status_code == 200
     assert "semantic-section" in resp.text  # semantic demoted into a collapsed block
 

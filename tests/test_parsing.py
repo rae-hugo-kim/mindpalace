@@ -16,8 +16,8 @@ def test_parse_claude_code_jsonl_basic(tmp_path):
     p = tmp_path / "5069e22f-4fbf-4510-a23e-a99333ba6a93.jsonl"
     lines = [
         '{"type":"ai-title","aiTitle":"Check favicon registration status","sessionId":"sess-1"}',
-        '{"type":"user","sessionId":"sess-1","uuid":"t1","parentUuid":null,"timestamp":"2026-05-26T10:00:00Z","message":{"role":"user","content":"Hello there"},"cwd":"/home/rae/proj","gitBranch":"main"}',
-        '{"type":"assistant","sessionId":"sess-1","uuid":"t2","parentUuid":"t1","timestamp":"2026-05-26T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi!"}]},"cwd":"/home/rae/proj","gitBranch":"main"}',
+        '{"type":"user","sessionId":"sess-1","uuid":"t1","parentUuid":null,"timestamp":"2026-05-26T10:00:00Z","message":{"role":"user","content":"Hello there"},"cwd":"/home/user/proj","gitBranch":"main"}',
+        '{"type":"assistant","sessionId":"sess-1","uuid":"t2","parentUuid":"t1","timestamp":"2026-05-26T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi!"}]},"cwd":"/home/user/proj","gitBranch":"main"}',
     ]
     p.write_text("\n".join(lines))
 
@@ -39,7 +39,7 @@ def test_parse_claude_code_jsonl_basic(tmp_path):
     assert t1["text"] == "Hi!"
     assert t1["parent_id"] == "t1"
 
-    assert result["extra"]["cwd"] == "/home/rae/proj"
+    assert result["extra"]["cwd"] == "/home/user/proj"
     assert result["extra"]["git_branch"] == "main"
 
 

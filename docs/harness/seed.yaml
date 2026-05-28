@@ -70,7 +70,7 @@ out_of_scope:
 
 assumptions:
   - Claude Code 세션 로그는 로컬 디스크에 접근 가능한 형태(JSONL 등)로 존재한다
-  - Claude 웹/데스크톱 채팅은 사용자가 가공한 JSON(schema_version 1)을 통해 들어온다 — 확정 완료. rae_chats.json 기준 402 conversations, 6803 messages, 0 other_users_excluded. dedup 키 (conversation.uuid, message.uuid), 청크 단위 = message, 청크 텍스트 = message.text, 표제어 = conversation.name
+  - Claude 웹/데스크톱 채팅은 사용자가 가공한 JSON(schema_version 1)을 통해 들어온다 — 확정 완료. chat-export.json 기준 402 conversations, 6803 messages, 0 other_users_excluded. dedup 키 (conversation.uuid, message.uuid), 청크 단위 = message, 청크 텍스트 = message.text, 표제어 = conversation.name
   - 임베딩 모델은 외부 API(OpenAI/Voyage 등) 또는 로컬 모델(예 sentence-transformers) 중 startdev에서 선택 가능하다
   - Tailscale 또는 동등한 mesh VPN은 사용자가 OS 레벨에서 별도 설치/설정한다 (앱은 0.0.0.0 바인딩만 책임)
   - 사용자 머신은 OS 디스크 암호화(LUKS / FileVault / BitLocker)가 이미 활성화되어 있거나 활성화할 수 있다
