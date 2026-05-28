@@ -399,6 +399,70 @@ def test_web_semantic_section_collapsed_when_keyword_hits(tmp_path: Path, warm_m
     assert "semantic-section" in resp.text  # semantic demoted into a collapsed block
 
 
+def test_web_context_hit_row_folds_when_long_assistant(tmp_path: Path, warm_model: None) -> None:
+    """T33 (RED): the hit row inside the context block must fold too when
+    it's a long assistant turn — otherwise the same wall the snippet card
+    just hid reappears below."""
+    db = str(tmp_path / "ctxfold.db")
+    init_db(db)
+    long_ans = "MARKERX 결론. " + ("내용이 길게 이어집니다. " * 60)
+    store_session(db, {
+        "session_id": "s", "title": "t", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "assistant", "text": long_ans,
+                   "timestamp": "2026-05-10T00:00:00Z", "parent_id": None}],
+    }, source="chat", embed_fn=embed_chunk)
+
+    resp = TestClient(create_app(db)).get(
+        "/search", params={"q": "MARKERX", "top_k": 1, "context": 1}
+    )
+    i = resp.text.find('<div class="ctx">')
+    j = resp.text.find('class="nlink"', i)
+    assert i >= 0 and j > i
+    ctx_block = resp.text[i:j]
+    assert "<details" in ctx_block  # hit row folds inside the context block
+
+
+def test_web_session_md_download(tmp_path: Path, warm_model: None) -> None:
+    """T33 (RED): /session.md returns the session as a markdown attachment
+    ready to paste into Claude/Codex."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/session.md", params={"session_id": "code-1"})
+    assert resp.status_code == 200
+    assert "text/markdown" in resp.headers["content-type"]
+    assert "attachment" in resp.headers.get("content-disposition", "").lower()
+    body = resp.text
+    assert "MCP setup walkthrough" in body
+    assert "How do I set up MCP servers in Claude Code?" in body
+    assert "Use claude mcp add to register a stdio server." in body
+    assert "## user" in body and "## assistant" in body
+
+
+def test_web_chunk_md_download(tmp_path: Path, warm_model: None) -> None:
+    """T33 (RED): /chunk.md returns a single chunk as markdown."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/chunk.md", params={"chunk_id": "code-1:t2"})
+    assert resp.status_code == 200
+    assert "text/markdown" in resp.headers["content-type"]
+    assert "Use claude mcp add to register a stdio server." in resp.text
+
+
+def test_web_session_md_unknown_session_404(tmp_path: Path, warm_model: None) -> None:
+    """T33 (RED): unknown session_id → 404 (not a silent empty file)."""
+    resp = TestClient(create_app(_populated_db(tmp_path))).get(
+        "/session.md", params={"session_id": "no-such"}
+    )
+    assert resp.status_code == 404
+
+
+def test_web_hit_has_md_download_links(tmp_path: Path, warm_model: None) -> None:
+    """T33 (RED): every hit offers chunk + session markdown download links."""
+    resp = TestClient(create_app(_populated_db(tmp_path))).get(
+        "/search", params={"q": "How do I set up MCP servers?", "top_k": 1}
+    )
+    assert "/chunk.md?chunk_id=" in resp.text
+    assert "/session.md?session_id=" in resp.text
+
+
 def test_search_escapes_html_in_results(tmp_path: Path, warm_model: None) -> None:
     """XSS guard: stored/queried content must be HTML-escaped in the page."""
     db = str(tmp_path / "xss.db")

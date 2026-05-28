@@ -287,6 +287,26 @@ def get_code_meta(db_path: str, session_id: str) -> dict | None:
     }
 
 
+def get_chunk(db_path: str, chunk_id: str) -> dict | None:
+    """Fetch a single chunk row by chunk_id. None if absent."""
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT chunk_id, session_id, turn_id, role, text, timestamp, source, title "
+            "FROM chunks WHERE chunk_id = ?",
+            (chunk_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "chunk_id": row[0], "session_id": row[1], "turn_id": row[2],
+        "role": row[3], "text": row[4], "timestamp": row[5],
+        "source": row[6], "title": row[7],
+    }
+
+
 def get_session_turns(db_path: str, session_id: str) -> dict | None:
     """Return a whole session for the full-session display level.
 

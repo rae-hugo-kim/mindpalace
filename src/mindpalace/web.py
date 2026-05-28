@@ -14,13 +14,14 @@ from __future__ import annotations
 import html
 import time
 
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse, Response
 
 from mindpalace.embedding import embed_chunk
 from mindpalace.search import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     find_neighbors,
+    get_chunk,
     get_chunk_context,
     get_code_meta,
     get_session_turns,
@@ -194,7 +195,10 @@ def _render_context(rows: list[dict]) -> str:
         marker = "► " if is_hit else "  "
         role = html.escape(r.get("role") or "")
         cls = "row hit" if is_hit else "row"
-        foldable = (r.get("role") == "assistant") and not is_hit
+        # Fold long assistant rows in context — even the hit row, since the
+        # snippet card above already shows the matched phrase; rendering the
+        # full wall here too is the duplication the user flagged.
+        foldable = r.get("role") == "assistant"
         body = _turn_text(r.get("text") or "", r.get("role") or "", foldable=foldable)
         parts.append(f'<div class="{cls}">{marker}{role}: {body}</div>')
     parts.append("</div>")
@@ -220,10 +224,13 @@ def _render_hit(
     warn = ' <span class="warn">⚠ low-confidence</span>' if low else ""
     distance = hit.get("distance")
     score = "exact match" if distance is None else f"distance={distance:.4f}"
+    cid_q = html.escape(chunk_id)
     nlink = (
         '<div class="nlink">'
         f'<a href="/session?session_id={sid_q}&hl={html.escape(turn_id)}">📄 전체 세션</a>'
         f' · <a href="/neighbors?session_id={sid_q}">↔ neighbors (학습↔작업)</a>'
+        f' · <a href="/chunk.md?chunk_id={cid_q}">⬇ md (청크)</a>'
+        f' · <a href="/session.md?session_id={sid_q}">⬇ md (세션)</a>'
         "</div>"
     )
     raw_text = hit.get("text") or ""
@@ -412,7 +419,8 @@ def create_app(db_path: str) -> FastAPI:
         body += (
             f'<p class="meta">source={source} · session={sid} · {len(s["turns"])} turns · '
             f'<a href="/">← back to search</a> · '
-            f'<a href="/neighbors?session_id={sid}">↔ neighbors</a></p>'
+            f'<a href="/neighbors?session_id={sid}">↔ neighbors</a> · '
+            f'<a href="/session.md?session_id={sid}">⬇ md</a></p>'
         )
         parts = ['<div class="ctx">']
         for t in s["turns"]:
@@ -426,5 +434,59 @@ def create_app(db_path: str) -> FastAPI:
         parts.append("</div>")
         body += "".join(parts)
         return _PAGE_HEAD + body + _PAGE_TAIL
+
+    @app.get("/session.md")
+    def session_md(session_id: str = Query(...)) -> Response:
+        s = get_session_turns(db_path, session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        lines = [
+            f"# {s.get('title') or session_id}",
+            "",
+            f"- session_id: `{session_id}`",
+            f"- source: {s.get('source') or ''}",
+            f"- {len(s['turns'])} turns",
+            "",
+            "---",
+        ]
+        for t in s["turns"]:
+            lines += [
+                "",
+                f"## {t.get('role','')} — {t.get('timestamp','')}",
+                "",
+                t.get("text", ""),
+            ]
+        content = "\n".join(lines) + "\n"
+        return Response(
+            content=content,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="mindpalace-{session_id}.md"'},
+        )
+
+    @app.get("/chunk.md")
+    def chunk_md(chunk_id: str = Query(...)) -> Response:
+        c = get_chunk(db_path, chunk_id)
+        if c is None:
+            raise HTTPException(status_code=404, detail="chunk not found")
+        lines = [
+            f"# Chunk · {c.get('title') or c.get('session_id')}",
+            "",
+            f"- chunk_id: `{chunk_id}`",
+            f"- session_id: `{c.get('session_id')}`",
+            f"- source: {c.get('source','')}",
+            f"- role: {c.get('role','')}",
+            f"- timestamp: {c.get('timestamp','')}",
+            "",
+            "---",
+            "",
+            c.get("text", ""),
+        ]
+        content = "\n".join(lines) + "\n"
+        fname = chunk_id.replace(":", "_").replace("/", "_")
+        return Response(
+            content=content,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="mindpalace-{fname}.md"'},
+        )
 
     return app
