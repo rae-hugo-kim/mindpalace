@@ -190,12 +190,20 @@ def keyword_search(
     Results share the semantic shape but carry ``match="keyword"`` and a
     ``distance``/``low_confidence`` of None/False; ordered most-recent first.
     The same meta filters apply.
+
+    Query is trimmed; an empty/whitespace-only query short-circuits to ``[]``
+    so we never run a wildcard ``%%`` scan. Matching uses ``str.casefold`` via
+    a registered SQLite function so non-ASCII case (e.g. ``Café``/``CAFÉ``)
+    folds too — SQLite's default ``LIKE`` only folds ASCII A–Z.
     """
+    q = (query or "").strip()
+    if not q:
+        return []
     sql = (
         "SELECT c.chunk_id, c.session_id, c.title, c.role, c.text, "
-        "c.timestamp, c.source FROM chunks c WHERE c.text LIKE ?"
+        "c.timestamp, c.source FROM chunks c WHERE mp_casefold(c.text) LIKE ?"
     )
-    params: list = [f"%{query}%"]
+    params: list = [f"%{q.casefold()}%"]
     filter_sql, filter_params = _chunk_filter_sql(
         where_source, where_since, where_until, where_title_like, where_file_like
     )
@@ -205,6 +213,7 @@ def keyword_search(
     params.append(top_k)
 
     conn = sqlite3.connect(db_path)
+    conn.create_function("mp_casefold", 1, lambda s: s.casefold() if s else s, deterministic=True)
     try:
         rows = conn.execute(sql, params).fetchall()
     finally:

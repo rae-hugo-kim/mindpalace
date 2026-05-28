@@ -433,3 +433,49 @@ def test_search_respects_top_k(tmp_path):
 
     assert len(search(db, "anything", embed_chunk, top_k=1)) == 1
     assert len(search(db, "anything", embed_chunk, top_k=10)) == 3
+
+
+def test_keyword_search_trims_surrounding_whitespace(tmp_path):
+    """T35 (RED): a query with leading/trailing whitespace must still find the
+    same chunks as the trimmed query. Real users paste/type queries with stray
+    spaces; literal `LIKE '%  q  %'` would silently miss the substring.
+    """
+    db = str(tmp_path / "kwtrim.db")
+    init_db(db)
+    _store_keyword_corpus(db)
+
+    res = keyword_search(db, "  마운자로  ", top_k=10)
+    assert [r["session_id"] for r in res] == ["drug"]
+
+
+def test_keyword_search_empty_query_returns_no_results(tmp_path):
+    """T35 (RED): an empty or whitespace-only query must not run a wildcard
+    ``%%`` match that returns the entire corpus.
+    """
+    db = str(tmp_path / "kwempty.db")
+    init_db(db)
+    _store_keyword_corpus(db)
+
+    assert keyword_search(db, "", top_k=10) == []
+    assert keyword_search(db, "   ", top_k=10) == []
+    # hybrid_search should also short-circuit the keyword side
+    out = hybrid_search(db, "   ", embed_chunk, top_k=5)
+    assert out["keyword"] == []
+
+
+def test_keyword_search_is_case_insensitive_for_non_ascii(tmp_path):
+    """T35 (RED): SQLite default LIKE folds only ASCII A–Z; non-ASCII
+    characters (e.g. accented Latin like 'CAFÉ') stay case-sensitive. Real
+    chat/code text mixes cases, so 'café' should also find 'CAFÉ' chunks.
+    """
+    db = str(tmp_path / "kwcase.db")
+    init_db(db)
+    store_session(db, {
+        "session_id": "cafe", "title": "café notes", "extra": {},
+        "turns": [{"turn_id": "t1", "role": "user",
+                   "text": "Best CAFÉ in Seoul for studying?",
+                   "timestamp": "2026-05-15T00:00:00Z", "parent_id": None}],
+    }, source="chat", embed_fn=embed_chunk)
+
+    res = keyword_search(db, "café", top_k=10)
+    assert [r["session_id"] for r in res] == ["cafe"]
