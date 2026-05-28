@@ -24,6 +24,7 @@ from mindpalace.search import (
     get_chunk,
     get_chunk_context,
     get_code_meta,
+    get_session_meta,
     get_session_turns,
     hybrid_search,
 )
@@ -167,6 +168,39 @@ def _match_snippet(text: str, query: str, *, is_keyword: bool,
     return html.escape(head) + trail
 
 
+def _format_session_meta(meta: dict | None) -> str:
+    """Compact session-scope line: turn count, timestamp span, role split.
+
+    Lets the user judge a session's depth before opening it. Empty string
+    for missing/empty sessions so the caller can interpolate unconditionally.
+    """
+    if not meta or not meta.get("turns"):
+        return ""
+    n = meta["turns"]
+    first = meta.get("first_ts") or ""
+    last = meta.get("last_ts") or ""
+    fd, ld = first[:10], last[:10]
+    if fd and ld and fd != ld:
+        try:
+            from datetime import date
+            days = (date.fromisoformat(ld) - date.fromisoformat(fd)).days + 1
+            span = f"{fd} ~ {ld} ({days}d)"
+        except ValueError:
+            span = f"{fd} ~ {ld}"
+    else:
+        span = fd or ld
+    by_role = meta.get("by_role") or {}
+    roles_str = ", ".join(
+        f"{html.escape(r)} {c}" for r, c in sorted(by_role.items(), key=lambda x: -x[1])
+    )
+    parts = [f"📚 {n} turns"]
+    if span:
+        parts.append(f"🕒 {html.escape(span)}")
+    if roles_str:
+        parts.append(f"🗨️ {roles_str}")
+    return " · ".join(parts)
+
+
 def _code_meta_badge(meta: dict | None) -> str:
     """Render a compact code-metadata badge (AC2) for a code hit."""
     if not meta:
@@ -211,6 +245,7 @@ def _render_hit(
     code_meta: dict | None = None,
     context_rows: list[dict] | None = None,
     query: str = "",
+    session_meta: dict | None = None,
 ) -> str:
     title = html.escape(str(hit.get("title") or ""))
     role = html.escape(hit.get("role") or "")
@@ -246,10 +281,13 @@ def _render_hit(
             f"본문 펼치기 (전체 {len(raw_text)}자)"
             f"</summary>{full}</details>"
         )
+    smeta_line = _format_session_meta(session_meta)
+    smeta_html = f'<div class="meta smeta">{smeta_line}</div>' if smeta_line else ""
     return (
         f'<div class="{cls}">'
         f'<div class="meta">[{i}] {score} · '
         f"source={source} · role={role} · title={title}{warn}</div>"
+        f"{smeta_html}"
         f"{body}"
         f"{_code_meta_badge(code_meta)}"
         f"{_render_context(context_rows or [])}"
@@ -310,6 +348,7 @@ def create_app(db_path: str) -> FastAPI:
         )
 
         meta_cache: dict[str, dict | None] = {}
+        smeta_cache: dict[str, dict | None] = {}
 
         def _render_list(hits: list[dict]) -> str:
             parts = []
@@ -320,11 +359,15 @@ def create_app(db_path: str) -> FastAPI:
                     if sid not in meta_cache:
                         meta_cache[sid] = get_code_meta(db_path, sid)
                     cm = meta_cache[sid]
+                if sid not in smeta_cache:
+                    smeta_cache[sid] = get_session_meta(db_path, sid)
+                sm = smeta_cache[sid]
                 ctx_rows = None
                 if context > 0:
                     turn_id = h["chunk_id"][len(sid) + 1:]
                     ctx_rows = get_chunk_context(db_path, sid, turn_id, window=context)
-                parts.append(_render_hit(i, h, code_meta=cm, context_rows=ctx_rows, query=q))
+                parts.append(_render_hit(i, h, code_meta=cm, context_rows=ctx_rows,
+                                          query=q, session_meta=sm))
             return "".join(parts)
 
         if total == 0:
@@ -415,13 +458,16 @@ def create_app(db_path: str) -> FastAPI:
         title = html.escape(str(s.get("title") or ""))
         source = html.escape(s.get("source") or "")
         sid = html.escape(session_id)
+        smeta_line = _format_session_meta(get_session_meta(db_path, session_id))
         body = f"<h2>{title}</h2>"
         body += (
-            f'<p class="meta">source={source} · session={sid} · {len(s["turns"])} turns · '
+            f'<p class="meta">source={source} · session={sid} · '
             f'<a href="/">← back to search</a> · '
             f'<a href="/neighbors?session_id={sid}">↔ neighbors</a> · '
             f'<a href="/session.md?session_id={sid}">⬇ md</a></p>'
         )
+        if smeta_line:
+            body += f'<p class="meta smeta">{smeta_line}</p>'
         parts = ['<div class="ctx">']
         for t in s["turns"]:
             is_hit = hl and t.get("turn_id") == hl

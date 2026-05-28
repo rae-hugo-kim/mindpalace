@@ -7,6 +7,7 @@ from mindpalace.embedding import embed_chunk
 from mindpalace.search import (
     find_neighbors,
     get_chunk_context,
+    get_session_meta,
     hybrid_search,
     keyword_search,
     search,
@@ -461,6 +462,43 @@ def test_keyword_search_empty_query_returns_no_results(tmp_path):
     # hybrid_search should also short-circuit the keyword side
     out = hybrid_search(db, "   ", embed_chunk, top_k=5)
     assert out["keyword"] == []
+
+
+def test_get_session_meta_returns_size_span_and_role_counts(tmp_path):
+    """T36 (RED): get_session_meta gives the three signals a hit/session reader
+    needs *before* opening the session — turn count, time span (first/last
+    timestamp), and role distribution. Lets the user judge depth from the
+    search result alone instead of clicking into each session.
+    """
+    db = str(tmp_path / "smeta.db")
+    init_db(db)
+    store_session(db, {
+        "session_id": "deep", "title": "long thread", "extra": {},
+        "turns": [
+            {"turn_id": "t1", "role": "user", "text": "q1",
+             "timestamp": "2026-05-10T09:00:00Z", "parent_id": None},
+            {"turn_id": "t2", "role": "assistant", "text": "a1",
+             "timestamp": "2026-05-10T09:01:00Z", "parent_id": "t1"},
+            {"turn_id": "t3", "role": "user", "text": "q2",
+             "timestamp": "2026-05-12T14:00:00Z", "parent_id": None},
+            {"turn_id": "t4", "role": "assistant", "text": "a2",
+             "timestamp": "2026-05-12T14:05:00Z", "parent_id": "t3"},
+        ],
+    }, source="chat", embed_fn=embed_chunk)
+
+    meta = get_session_meta(db, "deep")
+    assert meta is not None
+    assert meta["turns"] == 4
+    assert meta["first_ts"] == "2026-05-10T09:00:00Z"
+    assert meta["last_ts"] == "2026-05-12T14:05:00Z"
+    assert meta["by_role"] == {"user": 2, "assistant": 2}
+
+
+def test_get_session_meta_missing_session_returns_none(tmp_path):
+    """T36 (RED): unknown session_id returns None (mirrors get_session_turns)."""
+    db = str(tmp_path / "smeta_miss.db")
+    init_db(db)
+    assert get_session_meta(db, "nope") is None
 
 
 def test_keyword_search_is_case_insensitive_for_non_ascii(tmp_path):

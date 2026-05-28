@@ -355,6 +355,39 @@ def get_session_turns(db_path: str, session_id: str) -> dict | None:
     }
 
 
+def get_session_meta(db_path: str, session_id: str) -> dict | None:
+    """Session-level scope signals for the result list and reader header.
+
+    Returns the three signals a user wants before diving into a session:
+    total turn count, first/last timestamp (span), and role distribution.
+    ``None`` if the session is unknown (mirrors ``get_session_turns``).
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        agg = conn.execute(
+            "SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM chunks "
+            "WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        roles = conn.execute(
+            "SELECT role, COUNT(*) FROM chunks WHERE session_id = ? GROUP BY role",
+            (session_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "turns": agg[0] or 0,
+        "first_ts": agg[1],
+        "last_ts": agg[2],
+        "by_role": {r[0]: r[1] for r in roles},
+    }
+
+
 def get_chunk_context(
     db_path: str,
     session_id: str,

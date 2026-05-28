@@ -248,6 +248,30 @@ def test_hit_links_to_session(tmp_path: Path, warm_model: None) -> None:
     assert "/session?session_id=" in resp.text
 
 
+def test_session_page_shows_size_span_and_roles(tmp_path: Path, warm_model: None) -> None:
+    """T36 (RED): /session header carries the three signals — turn count,
+    timestamp span, role distribution — so the reader gauges scope before
+    diving in. code-1 has 2 turns on 2026-05-26 (user 1, assistant 1)."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/session", params={"session_id": "code-1"})
+    assert resp.status_code == 200
+    assert "2 turns" in resp.text
+    assert "2026-05-26" in resp.text
+    assert "user 1" in resp.text
+    assert "assistant 1" in resp.text
+
+
+def test_search_hit_shows_session_size(tmp_path: Path, warm_model: None) -> None:
+    """T36 (RED): a hit's meta line carries the session size so the user can
+    judge depth from the result list without opening every session. The
+    populated fixture has a 2-turn session and a 1-turn session."""
+    client = TestClient(create_app(_populated_db(tmp_path)))
+    resp = client.get("/search", params={"q": "MCP", "top_k": 5})
+    assert resp.status_code == 200
+    # at least one of the session sizes must appear on a hit meta line
+    assert "2 turns" in resp.text or "1 turns" in resp.text
+
+
 def test_form_number_inputs_have_visible_labels(tmp_path: Path, warm_model: None) -> None:
     """T28 (RED): the bare number inputs (top_k, context) carry visible text
     labels so the user knows what 5 and 2 mean without hovering."""
